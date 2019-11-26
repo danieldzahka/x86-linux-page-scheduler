@@ -29,13 +29,33 @@ pg_sched_release(struct inode * inodep,
   return 0;
 }
 
+static long
+pg_sched_ioctl(struct file * filp,
+	       unsigned int  cmd,
+	       unsigned long arg)
+{
+    int status;
+
+    switch (cmd) {
+    case PG_SCHED_SCAN_PT:
+      printk(KERN_INFO "Requested Page Table Scan\n");
+      status = 0;
+      break;
+
+    default:
+      status = -ENOIOCTLCMD;
+      break;
+    }
+            
+    return status;
+}
+
 static struct file_operations 
 pg_sched_fops = 
 {
     .open           = pg_sched_open,
     .release        = pg_sched_release,
-    /* .unlocked_ioctl = pg_sched_ioctl, */
-    /* .mmap           = pg_sched_mmap, */
+    .unlocked_ioctl = pg_sched_ioctl,
 };
 
 static struct miscdevice

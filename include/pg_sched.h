@@ -15,4 +15,8 @@
 #define PG_SCHED_MODULE_NAME "pg_sched"
 #define PG_SCHED_DEVICE_PATH "/dev/" PG_SCHED_MODULE_NAME
 
+/* IOCTL */
+#define PG_SCHED_MAGIC 'k'
+#define PG_SCHED_SCAN_PT _IO(PG_SCHED_MAGIC, 1)
+
 #endif /* __PG_SCHED_H__ */

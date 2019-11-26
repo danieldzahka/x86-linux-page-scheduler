@@ -42,7 +42,7 @@ pg_sched_init(void)
 static void __exit
 pg_sched_exit(void ) 
 {
-    /* misc_deregister(&dev_handle); */
+    misc_deregister(&dev_handle);
 
     printk(KERN_INFO "Unloaded page_scheduler module\n");
 }

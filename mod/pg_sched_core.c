@@ -7,11 +7,33 @@
 #include <pg_sched.h>
 #include <pg_sched_priv.h>
 
+/* debugging */
+int pg_sched_debug = 0;
+module_param(pg_sched_debug, int, 0644);
+
+static int
+pg_sched_open(struct inode * inodep,
+	      struct file  * filp)
+{
+  if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device opened\n");
+
+  return 0;
+}
+
+static int
+pg_sched_release(struct inode * inodep,
+		 struct file  * filp)
+{
+  if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device released\n");
+
+  return 0;
+}
+
 static struct file_operations 
 pg_sched_fops = 
 {
-    /* .open           = pg_sched_open, */
-    /* .flush          = pg_sched_flush, */
+    .open           = pg_sched_open,
+    .release        = pg_sched_release,
     /* .unlocked_ioctl = pg_sched_ioctl, */
     /* .mmap           = pg_sched_mmap, */
 };

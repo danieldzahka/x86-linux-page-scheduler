@@ -50,7 +50,7 @@ int pg_sched_scan_pgtbl(struct mm_struct *mm)
 			if(vma && pud_huge(*pud) && is_vm_hugetlb_page(vma))
 			{
 				spin_lock(&mm->page_table_lock);
-				page_table = huge_pte_offset(mm, address, vma_mmu_pagesize(vma));
+				/* page_table = huge_pte_offset(mm, address , vma_mmu_pagesize(vma)); */
 				/* *page_table = pte_mkreserve(*page_table); */
 				spin_unlock(&mm->page_table_lock);
 				continue;

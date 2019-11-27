@@ -6,6 +6,7 @@
 
 #include <pg_sched.h>
 #include <pg_sched_priv.h>
+#include <pg_sched_mem.h>
 
 /* debugging */
 int pg_sched_debug = 0;

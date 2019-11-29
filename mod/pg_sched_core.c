@@ -3,6 +3,7 @@
 #include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/fs.h>
+/* #include <linux/current.h> */
 
 #include <pg_sched.h>
 #include <pg_sched_priv.h>
@@ -40,6 +41,8 @@ pg_sched_ioctl(struct file * filp,
     switch (cmd) {
     case PG_SCHED_SCAN_PT:
       printk(KERN_INFO "Requested Page Table Scan\n");
+      /* NEED TO BUMP THE MM REFCOUNT PROBABLY!! */
+      count_vmas(current->mm);
       status = 0;
       break;
 

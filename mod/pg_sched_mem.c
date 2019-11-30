@@ -7,7 +7,7 @@
 #include <linux/mm_types.h>
 #include <linux/rwsem.h>
 #include <linux/sched/mm.h>
-
+#include <linux/pagewalk.h>
 
 /* struct mm_walk { */
 /*         int (*pud_entry)(pud_t *pud, unsigned long addr, */
@@ -52,7 +52,7 @@ pte_callback(pte_t *pte,
 	     struct mm_walk *walk)
 {
   unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
-  struct pg_walk_data * walk_data = walk->private;
+  /* struct pg_walk_data * walk_data = walk->private; */
   
   if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
@@ -67,20 +67,20 @@ hugetlb_callback(pte_t *pte,
 		 struct mm_walk *walk)
 {
   unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
-  struct pg_walk_data * walk_data = walk->private;
+  /* struct pg_walk_data * walk_data = walk->private; */
   
   if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
   return 0; /* MAYBE? */
 }
 
-static int
-pg_test_walk(unsigned long addr,
-	     unsigned long next,
-	     struct mm_walk *walk)
-{
-  return 0;
-}
+/* static int */
+/* pg_test_walk(unsigned long addr, */
+/* 	     unsigned long next, */
+/* 	     struct mm_walk *walk) */
+/* { */
+/*   return 0; */
+/* } */
 
 
 /* static struct mm_walk */
@@ -106,24 +106,29 @@ count_vmas(struct mm_struct * mm)
       .non_usr_pages_4MB = 0,
       .user_pages_4MB    = 0,
     };
+
+
+  struct mm_walk_ops
+      pg_sched_walk_ops =
+      {
+	  .pte_entry     = pte_callback,
+	  .hugetlb_entry = hugetlb_callback,
+      };
   
-  struct mm_walk
-    pg_sched_walk =
-    {
-      .pte_entry     = pte_callback,
-      .hugetlb_entry = hugetlb_callback,
-      .test_walk     = pg_test_walk,
-      .private       = &pg_walk_data,
-      .mm = mm,
-      .vma = NULL,
-    };
+  /* struct mm_walk */
+  /*     pg_sched_walk = */
+  /*     { */
+  /* 	  .ops     = &pg_sched_walk_ops, */
+  /* 	  .mm      = mm, */
+  /* 	  .vma     = NULL, */
+  /* 	  .private = &pg_walk_data, */
+  /*     }; */
   
   down_write(&(mm->mmap_sem));
   for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
-    pg_sched_walk.vma = vma;
     /* This can never end well... */
-    status = walk_page_vma(vma, &pg_sched_walk);
-    if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
+    /* status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data); */
+    /* if (status) printk(KERN_ALERT "PAGE WALK BAD\n"); */
   }
   up_write(&(mm->mmap_sem));
 }

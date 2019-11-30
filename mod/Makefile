@@ -1,4 +1,4 @@
-LINUX_KERN   ?= /lib/modules/`uname -r`/build/
+LINUX_KERN   ?= /home/dzahka3/guest-kernel/linux-5.4.1
 EXTRA_CFLAGS += -DMODULE=1 -D__KERNEL__=1 -I$(PWD)/../include -I$(PWD)
 
 pg_sched-y := \

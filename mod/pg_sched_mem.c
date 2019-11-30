@@ -52,9 +52,11 @@ pte_callback(pte_t *pte,
 	     struct mm_walk *walk)
 {
   unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
-  /* struct pg_walk_data * walk_data = walk->private; */
+  struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
   
   if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
+
+  walk_data->user_pages_4KB++;
 
   return 0; /* MAYBE? */
 }
@@ -67,31 +69,14 @@ hugetlb_callback(pte_t *pte,
 		 struct mm_walk *walk)
 {
   unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
-  /* struct pg_walk_data * walk_data = walk->private; */
+  struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
   
   if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
+  walk_data->user_pages_4MB++;
+  
   return 0; /* MAYBE? */
 }
-
-/* static int */
-/* pg_test_walk(unsigned long addr, */
-/* 	     unsigned long next, */
-/* 	     struct mm_walk *walk) */
-/* { */
-/*   return 0; */
-/* } */
-
-
-/* static struct mm_walk */
-/* pg_sched_walk = */
-/* { */
-/*   .pte_entry     = NULL, */
-/*   .hugetlb_entry = NULL, */
-/*   .private       = NULL, */
-/* }; */
-
-/* int walk_page_vma(struct vm_area_struct *vma, struct mm_walk *walk); */
 
 void
 count_vmas(struct mm_struct * mm)
@@ -114,23 +99,17 @@ count_vmas(struct mm_struct * mm)
 	  .pte_entry     = pte_callback,
 	  .hugetlb_entry = hugetlb_callback,
       };
-  
-  /* struct mm_walk */
-  /*     pg_sched_walk = */
-  /*     { */
-  /* 	  .ops     = &pg_sched_walk_ops, */
-  /* 	  .mm      = mm, */
-  /* 	  .vma     = NULL, */
-  /* 	  .private = &pg_walk_data, */
-  /*     }; */
-  
+    
   down_write(&(mm->mmap_sem));
   for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
     /* This can never end well... */
-    /* status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data); */
-    /* if (status) printk(KERN_ALERT "PAGE WALK BAD\n"); */
+    status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
+    if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
   }
   up_write(&(mm->mmap_sem));
+
+  printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
+  printk(KERN_INFO "Found %d 4MB pages\n", pg_walk_data.user_pages_4MB);
 }
 
 

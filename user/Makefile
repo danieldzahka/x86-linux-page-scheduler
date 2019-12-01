@@ -1,9 +1,12 @@
 CC=gcc
 CFLAGS=-I. -I../include
-TARGS= bin/test_mmap bin/main
+TARGS=bin/test_heap bin/test_mmap bin/main
 
 .PHONY:all
 all: $(TARGS)
+
+bin/test_heap: test_heap.o | bin
+	$(CC) -o $@ $^ $(CFLAGS)
 
 bin/test_mmap: test_mmap.o | bin
 	$(CC) -o $@ $^ $(CFLAGS)

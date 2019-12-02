@@ -13,22 +13,45 @@
 int pg_sched_debug = 0;
 module_param(pg_sched_debug, int, 0644);
 
+static unsigned long log_sec = 1;
+static unsigned long log_nsec = 0; 
+module_param(log_sec, ulong, 0);
+module_param(log_nsec, ulong, 0);
+
+
 static int
 pg_sched_open(struct inode * inodep,
 	      struct file  * filp)
 {
-  if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device opened\n");
+    int status;
+    if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device opened\n");
 
-  return 0;
+    /*To Do: Grab onto the mm struct and bump the refcount*/
+    /*To Do: Launch the page scheduler thread*/
+
+    register_init_vmas(current->mm);
+    status = launch_scanner_kthread(current->mm, log_sec, log_nsec);
+  
+    return status;
 }
 
 static int
 pg_sched_release(struct inode * inodep,
 		 struct file  * filp)
 {
-  if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device released\n");
+    int status;
+    if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device released\n");
 
-  return 0;
+    //Though for now, the blocking means that the user mm exists
+    /*To Do: Forget the mm struct and decrement the refcount*/
+    /*To Do: Kill the page scheduler thread*/
+
+    status = stop_scanner_thread();
+    if (status){
+	return -1;
+    }
+  
+    return 0;
 }
 
 static long
@@ -40,7 +63,7 @@ pg_sched_ioctl(struct file * filp,
 
     switch (cmd) {
     case PG_SCHED_SCAN_PT:
-      printk(KERN_INFO "Requested Page Table Scan\n");
+      /* printk(KERN_INFO "Requested Page Table Scan\n"); */
       /* NEED TO BUMP THE MM REFCOUNT PROBABLY!! */
       count_vmas(current->mm);
       status = 0;

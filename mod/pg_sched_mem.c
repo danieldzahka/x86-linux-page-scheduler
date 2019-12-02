@@ -8,42 +8,114 @@
 #include <linux/rwsem.h>
 #include <linux/sched/mm.h>
 #include <linux/pagewalk.h>
+#include <linux/kthread.h>
+#include <linux/sched.h>
 
-/* struct mm_walk { */
-/*         int (*pud_entry)(pud_t *pud, unsigned long addr, */
-/*                          unsigned long next, struct mm_walk *walk); */
-/*         int (*pmd_entry)(pmd_t *pmd, unsigned long addr, */
-/*                          unsigned long next, struct mm_walk *walk); */
-/*         int (*pte_entry)(pte_t *pte, unsigned long addr, */
-/*                          unsigned long next, struct mm_walk *walk); */
-/*         int (*pte_hole)(unsigned long addr, unsigned long next, */
-/*                         struct mm_walk *walk); */
-/*         int (*hugetlb_entry)(pte_t *pte, unsigned long hmask, */
-/*                              unsigned long addr, unsigned long next, */
-/*                              struct mm_walk *walk); */
-        /* int (*test_walk)(unsigned long addr, unsigned long next, */
-        /*                 struct mm_walk *walk); */
-/*         struct mm_struct *mm; */
-/*         struct vm_area_struct *vma; */
-/*         void *private; */
-/* }; */
+#define MAX_INIT_VMAS 20
+#define MAX_NEW_VMAS 20
+
+/* static int num_vmas; /\* May purposely become stale *\/ */
+
+static int init_vmas_size;
+static struct vm_area_struct * init_vmas[MAX_INIT_VMAS];
+
+/* For Additional Anon VMAs */
+/* static int new_vmas_size; */
+/* static struct vm_area_struct * new_vmas[MAX_NEW_VMAS]; */
+
+static ktime_t kt;
+static struct hrtimer timer;
+static struct task_struct* scanner_thread = NULL;
+
+int
+stop_scanner_thread(void)
+{
+    int status;
+    hrtimer_cancel(&timer);
+    status = kthread_stop(scanner_thread);
+    if(status){
+    	printk(KERN_ALERT "could not kill thread with return value:%d\n", status);
+	return status;
+    }
+
+    return 0;
+}
+
+/*Do something, sleep. Rinse and repeat */
+static int
+scanner_func(void * args)
+{
+    while(1){
+	printk(KERN_ALERT "HELLO\n");
+	set_current_state(TASK_INTERRUPTIBLE);
+	schedule();
+	if(kthread_should_stop()){
+	    break;
+	}
+    }
+    printk(KERN_ALERT "Exiting the loop, Terminating thread\n");
+    return 0;
+}
+
+/* timer function */
+static enum hrtimer_restart expiration_func(struct hrtimer * tim){
+    wake_up_process(scanner_thread);
+    hrtimer_forward_now(tim, kt);
+    printk(KERN_ALERT "timer expired\n");
+    return HRTIMER_RESTART;
+}
+
+int
+launch_scanner_kthread(struct mm_struct * mm,
+		       unsigned long log_sec,
+		       unsigned long log_nsec)
+{
+    scanner_thread = kthread_run(scanner_func, NULL, "pg_sched_scanner");
+    if (scanner_thread){
+	kt = ktime_set(log_sec, log_nsec);
+	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	timer.function = expiration_func;
+	hrtimer_start(&timer, kt, HRTIMER_MODE_REL);
+	return 0;
+    }
+    return -1;
+}
+
+void
+register_init_vmas(struct mm_struct * mm)
+{
+    struct vm_area_struct *vma;
+
+    down_write(&(mm->mmap_sem));
+    for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
+	/* This can never end well... */
+	if (!vma_is_anonymous(vma)) continue; /*Only interested in Anon*/
+	/* if (my_vma_is_stack_for_current(vma)) continue; /\*Don't count the stack*\/ */
+	if (vma->vm_flags & VM_EXEC) continue;
+	if (vma->vm_flags & VM_SPECIAL) continue; /* Dynamically Loaded Code Pages */
+
+	init_vmas[init_vmas_size++] = vma;
+    }
+    up_write(&(mm->mmap_sem));
+}
+
+static int
+is_new_vma(struct vm_area_struct *vma)
+{
+    int i;
+    for (i = 0; i < init_vmas_size; ++i){
+	if (vma == init_vmas[i]) return false;
+    }
+    return true;
+}
 
 struct pg_walk_data
 {
-  int non_usr_pages_4KB;
-  int user_pages_4KB;
-  int non_usr_pages_4MB;
-  int user_pages_4MB;
+    int non_usr_pages_4KB;
+    int user_pages_4KB;
+    int non_usr_pages_4MB;
+    int user_pages_4MB;
 };
-
-/* static struct pg_walk_data */
-/* pg_walk_data = */
-/* { */
-/*   .non_usr_pages_4KB = 0, */
-/*   .user_pages_4KB    = 0, */
-/*   .non_usr_pages_4MB = 0, */
-/*   .user_pages_4MB    = 0, */
-/* }; */
 
 static int
 pte_callback(pte_t *pte,
@@ -51,14 +123,14 @@ pte_callback(pte_t *pte,
 	     unsigned long next,
 	     struct mm_walk *walk)
 {
-  unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
-  struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
+    unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
+    struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
   
-  if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
+    if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
-  walk_data->user_pages_4KB++;
+    walk_data->user_pages_4KB++;
 
-  return 0; /* MAYBE? */
+    return 0; /* MAYBE? */
 }
 
 static int
@@ -68,48 +140,67 @@ hugetlb_callback(pte_t *pte,
 		 unsigned long next,
 		 struct mm_walk *walk)
 {
-  unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
-  struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
+    unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
+    struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
   
-  if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
+    if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
-  walk_data->user_pages_4MB++;
+    walk_data->user_pages_4MB++;
   
-  return 0; /* MAYBE? */
+    return 0; /* MAYBE? */
 }
+
+typedef int (*pg_sched_f_ptr)(struct vm_area_struct *vma);
 
 void
 count_vmas(struct mm_struct * mm)
 {
-  struct vm_area_struct *vma;
-  int status;
-  struct pg_walk_data
-    pg_walk_data =
-    {
-      .non_usr_pages_4KB = 0,
-      .user_pages_4KB    = 0,
-      .non_usr_pages_4MB = 0,
-      .user_pages_4MB    = 0,
-    };
+    struct vm_area_struct *vma;
+    int status;
+    pg_sched_f_ptr my_vma_is_stack_for_current;
+    int count = 0;
+    struct pg_walk_data
+	pg_walk_data =
+	{
+	    .non_usr_pages_4KB = 0,
+	    .user_pages_4KB    = 0,
+	    .non_usr_pages_4MB = 0,
+	    .user_pages_4MB    = 0,
+	};
 
 
-  struct mm_walk_ops
-      pg_sched_walk_ops =
-      {
-	  .pte_entry     = pte_callback,
-	  .hugetlb_entry = hugetlb_callback,
-      };
+    struct mm_walk_ops
+	pg_sched_walk_ops =
+	{
+	    .pte_entry     = pte_callback,
+	    .hugetlb_entry = hugetlb_callback,
+	};
+
+    unsigned long sym = kallsyms_lookup_name("vma_is_stack_for_current");
+    if (sym == 0){
+	printk(KERN_ALERT "func not found!\n");
+	return;
+    }
+
+    my_vma_is_stack_for_current = (pg_sched_f_ptr) sym;
     
-  down_write(&(mm->mmap_sem));
-  for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
-    /* This can never end well... */
-    status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
-    if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
-  }
-  up_write(&(mm->mmap_sem));
+    down_write(&(mm->mmap_sem));
+    for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
+	/* This can never end well... */
+	if (!vma_is_anonymous(vma)) continue; /*Only interested in Anon*/
+	if (my_vma_is_stack_for_current(vma)) continue; /*Don't count the stack*/
+	if (vma->vm_flags & VM_EXEC) continue;
+	if (vma->vm_flags & VM_SPECIAL) continue; /* Dynamically Loaded Code Pages */
+	if (!is_new_vma(vma)) continue;
+	
+	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
+	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
+    }
+    up_write(&(mm->mmap_sem));
 
-  printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
-  printk(KERN_INFO "Found %d 4MB pages\n", pg_walk_data.user_pages_4MB);
+    printk("count %d\n", count);
+    printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
+    /* printk(KERN_INFO "Found %d 4MB pages\n", pg_walk_data.user_pages_4MB); */
 }
 
 

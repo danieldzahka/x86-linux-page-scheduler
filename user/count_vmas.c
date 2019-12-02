@@ -5,7 +5,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
-#include <stdlib.h>
 
 #include <pg_sched.h>
 
@@ -25,26 +24,9 @@ int main(int argc, char **argv){
     puts("IOCTL ERROR\n");
     return status;
   }
+  printf("My pid %d\n", getpid());
+  getchar(); //block i think
 
-  char * region = (char*)malloc(100);
-
-  status = ioctl(device_fd, PG_SCHED_SCAN_PT, NULL);
-  if (status == -1){
-    puts("IOCTL ERROR\n");
-    return status;
-  }
-
-  for (int i = 0; i < 1 ; ++i){
-    region[0] = 'd'; /*Touch page*/
-  }
-  
-
-  status = ioctl(device_fd, PG_SCHED_SCAN_PT, NULL);
-  if (status == -1){
-    puts("IOCTL ERROR\n");
-    return status;
-  }
-   
   status = close(device_fd);
   if (status){
     puts("Error closing " PG_SCHED_DEVICE_PATH "\n");

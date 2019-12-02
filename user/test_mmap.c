@@ -74,7 +74,19 @@ int main(int argc, char **argv){
     puts("IOCTL ERROR\n");
     return status;
   }
-  
+
+  status = munmap(region, 100 * (1<<12));
+  if (status){
+    puts("BAD UNMAP");
+    return -1;
+  }
+
+  status = ioctl(device_fd, PG_SCHED_SCAN_PT, NULL);
+  if (status == -1){
+    puts("IOCTL ERROR\n");
+    return status;
+  }
+    
   status = close(device_fd);
   if (status){
     puts("Error closing " PG_SCHED_DEVICE_PATH "\n");

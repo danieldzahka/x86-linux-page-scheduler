@@ -3,6 +3,7 @@
 #include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/fs.h>
+#include <linux/kallsyms.h>
 /* #include <linux/current.h> */
 
 #include <pg_sched.h>
@@ -24,10 +25,30 @@ pg_sched_open(struct inode * inodep,
 	      struct file  * filp)
 {
     int status;
+    unsigned long sym;
+    
     if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device opened\n");
 
     /*To Do: Grab onto the mm struct and bump the refcount*/
     /*To Do: Launch the page scheduler thread*/
+
+
+    /* Grab non-exported funtion symbols */
+    sym = kallsyms_lookup_name("vma_is_stack_for_current");
+    if (sym == 0){
+	printk(KERN_ALERT "func not found!\n");
+	return -1;
+    }
+
+    my_vma_is_stack_for_current = (fake_vma_is_stack_for_current) sym;
+
+    sym = kallsyms_lookup_name("isolate_lru_page");
+    if (sym == 0){
+	printk(KERN_ALERT "func not found!\n");
+	return -1;
+    }
+
+    my_isolate_lru_page = (fake_isolate_lru_page) sym;
 
     register_init_vmas(current->mm);
     status = launch_scanner_kthread(current->mm, log_sec, log_nsec);

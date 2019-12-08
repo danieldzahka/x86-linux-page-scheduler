@@ -10,6 +10,11 @@
 #include <linux/pagewalk.h>
 #include <linux/kthread.h>
 #include <linux/sched.h>
+#include <linux/page_ref.h>
+#include <linux/migrate.h>
+#include <linux/gfp.h>
+
+#include <pg_sched_mem.h>
 
 #define MAX_INIT_VMAS 20
 #define MAX_NEW_VMAS 20
@@ -20,12 +25,28 @@ static int init_vmas_size;
 static struct vm_area_struct * init_vmas[MAX_INIT_VMAS];
 
 /* For Additional Anon VMAs */
-/* static int new_vmas_size; */
-/* static struct vm_area_struct * new_vmas[MAX_NEW_VMAS]; */
+static int new_vmas_size;
+static struct vm_area_struct * new_vmas[MAX_NEW_VMAS];
 
 static ktime_t kt;
 static struct hrtimer timer;
 static struct task_struct* scanner_thread = NULL;
+
+static struct mm_struct* my_mm;
+
+/* Return the idx of the region, store if not there */
+static int
+index_of_vma(struct vm_area_struct * vma)
+{
+    int i;
+    for (i= 0; i < new_vmas_size; ++i){
+	if (vma == new_vmas[i]) return i;
+    }
+    /*Not Found*/
+    new_vmas[new_vmas_size++] = vma;
+    BUG_ON(new_vmas_size >= MAX_NEW_VMAS);
+    return new_vmas_size - 1;
+}
 
 int
 stop_scanner_thread(void)
@@ -46,7 +67,7 @@ static int
 scanner_func(void * args)
 {
     while(1){
-	printk(KERN_ALERT "HELLO\n");
+	count_vmas(my_mm);
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule();
 	if(kthread_should_stop()){
@@ -61,7 +82,7 @@ scanner_func(void * args)
 static enum hrtimer_restart expiration_func(struct hrtimer * tim){
     wake_up_process(scanner_thread);
     hrtimer_forward_now(tim, kt);
-    printk(KERN_ALERT "timer expired\n");
+    /* printk(KERN_ALERT "timer expired\n"); */
     return HRTIMER_RESTART;
 }
 
@@ -70,6 +91,7 @@ launch_scanner_kthread(struct mm_struct * mm,
 		       unsigned long log_sec,
 		       unsigned long log_nsec)
 {
+    my_mm = mm;
     scanner_thread = kthread_run(scanner_func, NULL, "pg_sched_scanner");
     if (scanner_thread){
 	kt = ktime_set(log_sec, log_nsec);
@@ -115,7 +137,25 @@ struct pg_walk_data
     int user_pages_4KB;
     int non_usr_pages_4MB;
     int user_pages_4MB;
+    struct list_head * list;
+    int list_size;
 };
+
+struct page* pg_sched_alloc(struct page *page, unsigned long private)
+{
+    /*Need to allocate free page on opposite NUMA node... */
+    int target_node    = 0; /* Unhardcode later */
+    gfp_t gfp_mask     = GFP_KERNEL; /*May need to set movable flag? */
+    unsigned int order = 0;
+    pg_data_t *pgdat;
+    pgdat = page_pgdat(page);
+    target_node = !pgdat->node_id;
+    return alloc_pages_node(target_node, gfp_mask, order);
+}
+
+/* Function Symbols to look up */
+fake_isolate_lru_page my_isolate_lru_page = NULL;
+fake_vma_is_stack_for_current my_vma_is_stack_for_current = NULL;
 
 static int
 pte_callback(pte_t *pte,
@@ -123,11 +163,60 @@ pte_callback(pte_t *pte,
 	     unsigned long next,
 	     struct mm_walk *walk)
 {
+    int status;
+    struct page * page;
+    pg_data_t *pgdat;
     unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
     struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
+    struct list_head * migration_list = walk_data->list;
   
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
+    /* if (pte_young(*pte)){ */
+    /* 	*pte = pte_mkold(*pte);//mkold */
+    /* 	printk(KERN_INFO "Found old page\n"); */
+    /* } */
 
+    /*
+      1) bump refcount for page (Don't think I need to do this)
+      2) isolate_lru_page
+      3) Check if the page is unevictable
+      4) add to list by linkage on lru field?
+      call migrate_pages -> This should do the rest?
+     */
+
+    /* Holy Shit */
+    page = pte_page(*pte);
+    /* printk(KERN_INFO "refcount on the page is %d\n", page_count(page)); */
+    pgdat = page_pgdat(page);
+    /* printk(KERN_INFO "NUMA NODE %d\n", pgdat->node_id); */
+    /* { */
+    /* 	int is_lru; */
+    /* 	is_lru = PageLRU(page); */
+    /* 	printk(KERN_INFO "is lru? : %d\n", is_lru); */
+    /* } */
+
+
+    if (PageLRU(page) && walk_data->list_size < 10 && !PageUnevictable(page)){
+	/*Try to add page to list */
+	/* 2) */
+	status = my_isolate_lru_page(page);
+	if (status){
+	    printk(KERN_EMERG "ERROR ISOLATING\n");
+	    return 0;
+	}
+
+	/* 3) */
+	if (PageUnevictable(page)){
+	    printk(KERN_EMERG "PAGE IS UNEVICTABLE... PUT BACK!!\n");
+	    return 0;
+	}
+
+	/* 4) */
+	list_add(&(page->lru), migration_list);
+	++walk_data->list_size;
+	printk(KERN_INFO "Page Added To Migration List\n");
+    }
+    
     walk_data->user_pages_4KB++;
 
     return 0; /* MAYBE? */
@@ -150,15 +239,14 @@ hugetlb_callback(pte_t *pte,
     return 0; /* MAYBE? */
 }
 
-typedef int (*pg_sched_f_ptr)(struct vm_area_struct *vma);
 
 void
 count_vmas(struct mm_struct * mm)
 {
     struct vm_area_struct *vma;
     int status;
-    pg_sched_f_ptr my_vma_is_stack_for_current;
-    int count = 0;
+    LIST_HEAD(migration_list);
+    
     struct pg_walk_data
 	pg_walk_data =
 	{
@@ -166,6 +254,8 @@ count_vmas(struct mm_struct * mm)
 	    .user_pages_4KB    = 0,
 	    .non_usr_pages_4MB = 0,
 	    .user_pages_4MB    = 0,
+	    .list              = NULL,
+	    .list_size         = 0,
 	};
 
 
@@ -175,14 +265,6 @@ count_vmas(struct mm_struct * mm)
 	    .pte_entry     = pte_callback,
 	    .hugetlb_entry = hugetlb_callback,
 	};
-
-    unsigned long sym = kallsyms_lookup_name("vma_is_stack_for_current");
-    if (sym == 0){
-	printk(KERN_ALERT "func not found!\n");
-	return;
-    }
-
-    my_vma_is_stack_for_current = (pg_sched_f_ptr) sym;
     
     down_write(&(mm->mmap_sem));
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
@@ -192,13 +274,13 @@ count_vmas(struct mm_struct * mm)
 	if (vma->vm_flags & VM_EXEC) continue;
 	if (vma->vm_flags & VM_SPECIAL) continue; /* Dynamically Loaded Code Pages */
 	if (!is_new_vma(vma)) continue;
-	
+
+	printk(KERN_EMERG "VMA ADDRESS: %lx\n", vma->vm_start);
+	pg_walk_data.list = &migration_list;
 	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
 	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
     }
     up_write(&(mm->mmap_sem));
-
-    printk("count %d\n", count);
     printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
     /* printk(KERN_INFO "Found %d 4MB pages\n", pg_walk_data.user_pages_4MB); */
 }

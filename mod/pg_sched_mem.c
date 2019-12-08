@@ -11,7 +11,6 @@
 #include <linux/kthread.h>
 #include <linux/sched.h>
 #include <linux/page_ref.h>
-#include <linux/migrate.h>
 #include <linux/gfp.h>
 
 #include <pg_sched_mem.h>
@@ -156,6 +155,7 @@ struct page* pg_sched_alloc(struct page *page, unsigned long private)
 /* Function Symbols to look up */
 fake_isolate_lru_page my_isolate_lru_page = NULL;
 fake_vma_is_stack_for_current my_vma_is_stack_for_current = NULL;
+fake_migrate_pages my_migrate_pages = NULL;
 
 static int
 pte_callback(pte_t *pte,
@@ -281,6 +281,17 @@ count_vmas(struct mm_struct * mm)
 	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
     }
     up_write(&(mm->mmap_sem));
+
+    /*Drain the migration list*/
+    /*Figure out how to put stuff back on the LRU if we can't move it */
+    /*Unless of course, migrate_pages does this already */
+
+    status = my_migrate_pages(&migration_list, pg_sched_alloc,
+			   NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
+
+    if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status);
+    if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");
+    
     printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
     /* printk(KERN_INFO "Found %d 4MB pages\n", pg_walk_data.user_pages_4MB); */
 }

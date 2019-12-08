@@ -50,6 +50,15 @@ pg_sched_open(struct inode * inodep,
 
     my_isolate_lru_page = (fake_isolate_lru_page) sym;
 
+    sym = kallsyms_lookup_name("migrate_pages");
+    if (sym == 0){
+	printk(KERN_ALERT "func not found!\n");
+	return -1;
+    }
+
+    my_migrate_pages = (fake_migrate_pages) sym;
+
+    
     register_init_vmas(current->mm);
     status = launch_scanner_kthread(current->mm, log_sec, log_nsec);
   

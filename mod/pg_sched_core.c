@@ -80,6 +80,12 @@ pg_sched_release(struct inode * inodep,
     if (status){
 	return -1;
     }
+
+    //print out data
+    print_page_access_data();
+    
+    //free memory
+    free_page_access_arrays();
   
     return 0;
 }

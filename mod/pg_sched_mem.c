@@ -34,11 +34,38 @@ struct vma_desc {
     unsigned long vm_start;
     unsigned long vm_end;
     int *         page_accesses;
+    int           num_pages;
 };
 
 /* For Additional Anon VMAs */
 static int new_vmas_size = 0;
 static struct vma_desc new_vmas[MAX_NEW_VMAS];
+
+void
+free_page_access_arrays(void)
+{
+    int i;
+
+    for (i = 0; i < new_vmas_size; ++i){
+	kfree(new_vmas[i].page_accesses);
+    }
+}
+
+/*Make sure we dont free the data before this*/
+void
+print_page_access_data(void)
+{
+    int i;
+    int j;
+    int pages;
+
+    printk(KERN_INFO "vma,pfn,count\n");
+    for (i = 0; i < new_vmas_size; ++i){
+	for (j = 0; j < new_vmas[i].num_pages; ++j){
+	    printk(KERN_INFO "%d,%d,%d\n", i, j, new_vmas[i].page_accesses[j]);
+	}
+    }
+}
 
 static int
 track_vma(struct vm_area_struct * vma, int idx)
@@ -49,9 +76,11 @@ track_vma(struct vm_area_struct * vma, int idx)
 	    .vm_start      = vma->vm_start,
 	    .vm_end        = vma->vm_end,
 	    .page_accesses = NULL,
+	    .num_pages     = 0,
 	};
     int num_pages = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
 	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;
+    desc.num_pages = num_pages;
     
     desc.page_accesses = kzalloc(num_pages * sizeof(int), GFP_KERNEL);
     if (IS_ERR(desc.page_accesses)){
@@ -71,7 +100,7 @@ static int
 index_of_vma(struct vm_area_struct * vma)
 {
     int i, status;
-    for (i= 0; i < new_vmas_size; ++i){
+    for (i = 0; i < new_vmas_size; ++i){
 	//make sure that the bounds are still valid...
 	if (vma == new_vmas[i].vma){
 	    if (vma->vm_start != new_vmas[i].vm_start ||
@@ -223,12 +252,9 @@ pte_callback(pte_t *pte,
     unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
     struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
     struct list_head * migration_list = walk_data->list;
-  
+    int pg_off;
+    
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
-    /* if (pte_young(*pte)){ */
-    /* 	*pte = pte_mkold(*pte);//mkold */
-    /* 	printk(KERN_INFO "Found old page\n"); */
-    /* } */
 
     /*
       1) bump refcount for page (Don't think I need to do this)
@@ -241,11 +267,11 @@ pte_callback(pte_t *pte,
     /* Holy Shit */
     page = pte_page(*pte);
     /* printk(KERN_INFO "refcount on the page is %d\n", page_count(page)); */
-    pgdat = page_pgdat(page);
-    if (pgdat->node_id == 0)
-	++walk_data->n0;
-    else
-	++walk_data->n1;
+    /* pgdat = page_pgdat(page); */
+    /* if (pgdat->node_id == 0) */
+    /* 	++walk_data->n0; */
+    /* else */
+    /* 	++walk_data->n1; */
     /* printk(KERN_INFO "NUMA NODE %d\n", pgdat->node_id); */
     /* { */
     /* 	int is_lru; */
@@ -253,27 +279,35 @@ pte_callback(pte_t *pte,
     /* 	printk(KERN_INFO "is lru? : %d\n", is_lru); */
     /* } */
 
-
-    if (PageLRU(page) && walk_data->list_size < 10 && !PageUnevictable(page) && pgdat->node_id == 0){
-	/*Try to add page to list */
-	/* 2) */
-	status = my_isolate_lru_page(page);
-	if (status){
-	    printk(KERN_EMERG "ERROR ISOLATING\n");
-	    return 0;
-	}
-
-	/* 3) */
-	if (PageUnevictable(page)){
-	    printk(KERN_EMERG "PAGE IS UNEVICTABLE... PUT BACK!!\n");
-	    return 0;
-	}
-
-	/* 4) */
-	list_add(&(page->lru), migration_list);
-	++walk_data->list_size;
-	printk(KERN_INFO "Page Added To Migration List\n");
+    if (pte_young(*pte)){
+    	*pte = pte_mkold(*pte);//mkold
+	pg_off = (addr - walk_data->vma_desc->vm_start) >> 12;
+	walk_data->vma_desc->page_accesses[pg_off]++;
     }
+    
+    /*Page Access Stats*/
+
+    /* if (PageLRU(page) && walk_data->list_size < 10 && */
+    /* 	!PageUnevictable(page) && pgdat->node_id == 0){ */
+    /* 	/\*Try to add page to list *\/ */
+    /* 	/\* 2) *\/ */
+    /* 	status = my_isolate_lru_page(page); */
+    /* 	if (status){ */
+    /* 	    printk(KERN_EMERG "ERROR ISOLATING\n"); */
+    /* 	    return 0; */
+    /* 	} */
+
+    /* 	/\* 3) *\/ */
+    /* 	if (PageUnevictable(page)){ */
+    /* 	    printk(KERN_EMERG "PAGE IS UNEVICTABLE... PUT BACK!!\n"); */
+    /* 	    return 0; */
+    /* 	} */
+
+    /* 	/\* 4) *\/ */
+    /* 	list_add(&(page->lru), migration_list); */
+    /* 	++walk_data->list_size; */
+    /* 	printk(KERN_INFO "Page Added To Migration List\n"); */
+    /* } */
     
     walk_data->user_pages_4KB++;
 
@@ -348,100 +382,12 @@ count_vmas(struct mm_struct * mm)
     /*Figure out how to put stuff back on the LRU if we can't move it */
     /*Unless of course, migrate_pages does this already */
 
-    status = my_migrate_pages(&migration_list, pg_sched_alloc,
-			   NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
+    /* status = my_migrate_pages(&migration_list, pg_sched_alloc, */
+    /* 			   NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED); */
 
-    if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status);
-    if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");
+    /* if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status); */
+    /* if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n"); */
     
     printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
     printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);
 }
-
-
-
-/* #include <linux/badger_trap.h> */
-
-/* This is a modified version of the Page Table walk from */
-/* badger trap https://research.cs.wisc.edu/multifacet/BadgerTrap/ */
-/*
- * This function walks the page table of the process being marked for badger trap
- * This helps in finding all the PTEs that are to be marked as reserved. This is 
- * espicially useful to start badger trap on the fly using (2) and (3). If we do not
- * call this function, when starting badger trap for any process, we may miss some TLB 
- * misses from being tracked which may not be desierable.
- *
- * Note: This function takes care of transparent hugepages and hugepages in general.
- */
-
-/* pte_t *huge_pte_offset(struct mm_struct *mm, */
-/* 		       unsigned long addr, unsigned long sz); */
-
-/*  int pg_sched_scan_pgtbl(struct mm_struct *mm) */
-/* { */
-/* 	pgd_t *pgd; */
-/* 	pud_t *pud; */
-/* 	pmd_t *pmd; */
-/* 	pte_t *pte; */
-/* 	pte_t *page_table; */
-/* 	spinlock_t *ptl; */
-/* 	unsigned long address; */
-/* 	unsigned long i,j,k,l; */
-/* 	unsigned long user = 0; */
-/* 	unsigned long mask = _PAGE_USER | _PAGE_PRESENT; */
-/* 	struct vm_area_struct *vma; */
-/* 	pgd_t *base = mm->pgd; */
-/* 	for(i=0; i<PTRS_PER_PGD; i++) */
-/* 	{ */
-/* 		pgd = base + i; */
-/* 		if((pgd_flags(*pgd) & mask) != mask) */
-/* 			continue; */
-/* 		for(j=0; j<PTRS_PER_PUD; j++) */
-/* 		{ */
-/* 			pud = (pud_t *)pgd_page_vaddr(*pgd) + j; */
-/* 			if((pud_flags(*pud) & mask) != mask) */
-/*                         	continue; */
-/* 			address = (i<<PGDIR_SHIFT) + (j<<PUD_SHIFT); */
-/* 			if(vma && pud_huge(*pud) && is_vm_hugetlb_page(vma)) */
-/* 			{ */
-/* 				spin_lock(&mm->page_table_lock); */
-/* 				/\* page_table = huge_pte_offset(mm, address , vma_mmu_pagesize(vma)); *\/ */
-/* 				/\* *page_table = pte_mkreserve(*page_table); *\/ */
-/* 				spin_unlock(&mm->page_table_lock); */
-/* 				continue; */
-/* 			} */
-/* 			for(k=0; k<PTRS_PER_PMD; k++) */
-/* 			{ */
-/* 				pmd = (pmd_t *)pud_page_vaddr(*pud) + k; */
-/* 				if((pmd_flags(*pmd) & mask) != mask) */
-/* 					continue; */
-/* 				address = (i<<PGDIR_SHIFT) + (j<<PUD_SHIFT) + (k<<PMD_SHIFT); */
-/* 				vma = find_vma(mm, address); */
-/* 				if(vma && pmd_huge(*pmd) && (transparent_hugepage_enabled(vma)||is_vm_hugetlb_page(vma))) */
-/* 				{ */
-/* 					spin_lock(&mm->page_table_lock); */
-/* 					/\* *pmd = pmd_mkreserve(*pmd); *\/ */
-/* 					spin_unlock(&mm->page_table_lock); */
-/* 					continue; */
-/* 				} */
-/* 				for(l=0; l<PTRS_PER_PTE; l++) */
-/* 				{ */
-/* 					pte = (pte_t *)pmd_page_vaddr(*pmd) + l; */
-/* 					if((pte_flags(*pte) & mask) != mask) */
-/* 						continue; */
-/* 					address = (i<<PGDIR_SHIFT) + (j<<PUD_SHIFT) + (k<<PMD_SHIFT) + (l<<PAGE_SHIFT); */
-/* 					vma = find_vma(mm, address); */
-/* 					if(vma) */
-/* 					{ */
-/* 						page_table = pte_offset_map_lock(mm, pmd, address, &ptl); */
-/* 						/\* *pte = pte_mkreserve(*pte); *\/ */
-/* 						pte_unmap_unlock(page_table, ptl); */
-/* 					} */
-/* 					user++; */
-/* 				} */
-/* 			} */
-/* 		} */
-/* 	} */
-
-/* 	return user; */
-/* } */

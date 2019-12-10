@@ -11,6 +11,9 @@ int launch_scanner_kthread(struct mm_struct * mm,
 		       unsigned long log_nsec);
 
 int stop_scanner_thread(void);
+void print_page_access_data(void);
+void free_page_access_arrays(void);
+
 
 typedef int (*fake_isolate_lru_page)(struct page *page);
 typedef int (*fake_vma_is_stack_for_current)(struct vm_area_struct *vma);

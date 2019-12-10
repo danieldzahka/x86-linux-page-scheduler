@@ -23,28 +23,79 @@
 static int init_vmas_size;
 static struct vm_area_struct * init_vmas[MAX_INIT_VMAS];
 
-/* For Additional Anon VMAs */
-static int new_vmas_size;
-static struct vm_area_struct * new_vmas[MAX_NEW_VMAS];
-
 static ktime_t kt;
 static struct hrtimer timer;
 static struct task_struct* scanner_thread = NULL;
 
 static struct mm_struct* my_mm;
 
+struct vma_desc {
+    struct vm_area_struct * vma; /*Use as key*/
+    unsigned long vm_start;
+    unsigned long vm_end;
+    int *         page_accesses;
+};
+
+/* For Additional Anon VMAs */
+static int new_vmas_size = 0;
+static struct vma_desc new_vmas[MAX_NEW_VMAS];
+
+static int
+track_vma(struct vm_area_struct * vma, int idx)
+{
+    struct vma_desc desc =
+	{
+	    .vma           = vma,
+	    .vm_start      = vma->vm_start,
+	    .vm_end        = vma->vm_end,
+	    .page_accesses = NULL,
+	};
+    int num_pages = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
+	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;
+    
+    desc.page_accesses = kzalloc(num_pages * sizeof(int), GFP_KERNEL);
+    if (IS_ERR(desc.page_accesses)){
+	printk(KERN_EMERG "Error Allocating page access vector\n");
+	return -1;
+    }
+
+    WARN_ON(idx >= MAX_NEW_VMAS);
+
+    new_vmas[idx] = desc;
+    return 0;
+}
+
 /* Return the idx of the region, store if not there */
+/* Worry about merging VMA's later... */
 static int
 index_of_vma(struct vm_area_struct * vma)
 {
-    int i;
+    int i, status;
     for (i= 0; i < new_vmas_size; ++i){
-	if (vma == new_vmas[i]) return i;
-    }
-    /*Not Found*/
-    new_vmas[new_vmas_size++] = vma;
-    BUG_ON(new_vmas_size >= MAX_NEW_VMAS);
+	//make sure that the bounds are still valid...
+	if (vma == new_vmas[i].vma){
+	    if (vma->vm_start != new_vmas[i].vm_start ||
+		vma->vm_end != new_vmas[i].vm_end){
+		//resize
+		kfree(new_vmas[i].page_accesses);
+		track_vma(vma, i);
+	    }
+	    return i;
+	}
+    }        
+    //not found
+    status = track_vma(vma, new_vmas_size);
+    if (status) printk(KERN_EMERG "Error Tracking VMA\n");
+    new_vmas_size++;
     return new_vmas_size - 1;
+}
+
+static struct vma_desc *
+get_vma_desc(struct vm_area_struct * vma)
+{
+    int i;
+    i = index_of_vma(vma);
+    return &(new_vmas[i]);
 }
 
 int
@@ -136,8 +187,11 @@ struct pg_walk_data
     int user_pages_4KB;
     int non_usr_pages_4MB;
     int user_pages_4MB;
+    int n0;
+    int n1;
     struct list_head * list;
     int list_size;
+    struct vma_desc * vma_desc;
 };
 
 struct page* pg_sched_alloc(struct page *page, unsigned long private)
@@ -188,6 +242,10 @@ pte_callback(pte_t *pte,
     page = pte_page(*pte);
     /* printk(KERN_INFO "refcount on the page is %d\n", page_count(page)); */
     pgdat = page_pgdat(page);
+    if (pgdat->node_id == 0)
+	++walk_data->n0;
+    else
+	++walk_data->n1;
     /* printk(KERN_INFO "NUMA NODE %d\n", pgdat->node_id); */
     /* { */
     /* 	int is_lru; */
@@ -196,7 +254,7 @@ pte_callback(pte_t *pte,
     /* } */
 
 
-    if (PageLRU(page) && walk_data->list_size < 10 && !PageUnevictable(page)){
+    if (PageLRU(page) && walk_data->list_size < 10 && !PageUnevictable(page) && pgdat->node_id == 0){
 	/*Try to add page to list */
 	/* 2) */
 	status = my_isolate_lru_page(page);
@@ -254,8 +312,11 @@ count_vmas(struct mm_struct * mm)
 	    .user_pages_4KB    = 0,
 	    .non_usr_pages_4MB = 0,
 	    .user_pages_4MB    = 0,
+	    .n0                = 0,
+	    .n1                = 0,
 	    .list              = NULL,
 	    .list_size         = 0,
+	    .vma_desc          = NULL,
 	};
 
 
@@ -275,8 +336,9 @@ count_vmas(struct mm_struct * mm)
 	if (vma->vm_flags & VM_SPECIAL) continue; /* Dynamically Loaded Code Pages */
 	if (!is_new_vma(vma)) continue;
 
-	printk(KERN_EMERG "VMA ADDRESS: %lx\n", vma->vm_start);
+	/* printk(KERN_EMERG "VMA ADDRESS: %lx\n", vma->vm_start); */
 	pg_walk_data.list = &migration_list;
+	pg_walk_data.vma_desc = get_vma_desc(vma);
 	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
 	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
     }
@@ -293,7 +355,7 @@ count_vmas(struct mm_struct * mm)
     if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");
     
     printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
-    /* printk(KERN_INFO "Found %d 4MB pages\n", pg_walk_data.user_pages_4MB); */
+    printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);
 }
 
 

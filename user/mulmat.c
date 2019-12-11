@@ -71,12 +71,12 @@ int main(int argc, char **argv){
 
   print_timediff(&start, &stop);
 
-  status = ioctl(device_fd, PG_SCHED_SCAN_PT, NULL);
-  if (status == -1){
-    puts("IOCTL ERROR\n");
-    return status;
-  }
-  
+  /* status = ioctl(device_fd, PG_SCHED_SCAN_PT, NULL); */
+  /* if (status == -1){ */
+  /*   puts("IOCTL ERROR\n"); */
+  /*   return status; */
+  /* } */
+
   munmap(A, length);
   munmap(B, length);
   munmap(C, length);

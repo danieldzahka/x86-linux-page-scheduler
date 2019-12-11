@@ -4,7 +4,7 @@
 #include <linux/miscdevice.h>
 #include <linux/fs.h>
 #include <linux/kallsyms.h>
-/* #include <linux/current.h> */
+#include <linux/seq_file.h>
 
 #include <pg_sched.h>
 #include <pg_sched_priv.h>
@@ -19,6 +19,16 @@ static unsigned long log_nsec = 0;
 module_param(log_sec, ulong, 0);
 module_param(log_nsec, ulong, 0);
 
+/* seq_file stuff */
+static int
+pg_sched_data_show(struct seq_file *m,
+	      void *v)
+{
+    
+    return 0;
+}
+
+DEFINE_SHOW_ATTRIBUTE(pg_sched_data);
 
 static int
 pg_sched_open(struct inode * inodep,

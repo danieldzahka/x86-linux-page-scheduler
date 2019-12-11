@@ -182,6 +182,7 @@ launch_scanner_kthread(struct mm_struct * mm,
     return -1;
 }
 
+/*This has a side effect in that it uses static var init_vmas_xxx */
 void
 register_init_vmas(struct mm_struct * mm)
 {

@@ -14,7 +14,7 @@
 
 #include <pg_sched.h>
 
-#define REGION_SIZE (1 << 30)
+#define REGION_SIZE (1 << 29)
 
 static double
 get_timediff(struct timeval * start,
@@ -55,17 +55,42 @@ main (void)
 
   gettimeofday(&start, NULL);
 
-  double mu    = length / 2;
+  double mu1    = length / 5;
+  double mu2    =  2*mu1;
+  double mu3    = 3*mu1;
+  double mu4    = 4*mu1;
   double sigma = length / 40;
 
+  int count = 0;
   do {
-    double norm = gsl_ran_gaussian(r, sigma) + mu;
+    double norm = gsl_ran_laplace(r, sigma) + mu1;
+    double norm2 = gsl_ran_laplace(r, sigma) + mu2;
+    double norm3 = gsl_ran_laplace(r, sigma) + mu3;
+    double norm4 = gsl_ran_laplace(r, sigma) + mu4;	    
     long off = lround(norm);
+    long off2 = lround(norm2);
+    long off3 = lround(norm3);
+    long off4 = lround(norm4);
     if (off < 0) off = 0;
     if (off >= length) off = length - 1;
+    if (off2 < 0) off2 = 0;
+    if (off2 >= length) off2 = length - 1;
+    if (off3 < 0) off3 = 0;
+    if (off3 >= length) off3 = length - 1;
+    if (off4 < 0) off4 = 0;
+    if (off4 >= length) off4 = length - 1;
+
     region[off] = 'a';
+    region[off2] = 'a';
+    region[off3] = 'a';
+    region[off4] = 'a';
+
+    if (count++ > 5000){
+      usleep(500000);
+      count = 0;
+    }
     gettimeofday(&stop, NULL);
-  } while (get_timediff(&start, &stop) < 100.0);
+  } while (get_timediff(&start, &stop) < 300.0);
 
 
   status = close(device_fd);

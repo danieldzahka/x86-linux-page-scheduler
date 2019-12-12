@@ -1,9 +1,14 @@
 CC=gcc
 CFLAGS=-I. -I../include
-TARGS=bin/test_heap bin/test_mmap bin/main bin/count_vmas bin/mulmat
+CXX=g++
+CXXFLAGS=-std=c++11 -I. -I../include
+TARGS=bin/test_heap bin/test_mmap bin/main bin/count_vmas bin/mulmat bin/randnorm
 
 .PHONY:all
 all: $(TARGS)
+
+bin/randnorm: randnorm.o | bin
+	$(CXX) -o $@ $^ $(CXXFLAGS)
 
 bin/mulmat: mulmat.o | bin
 	$(CC) -o $@ $^ $(CFLAGS)

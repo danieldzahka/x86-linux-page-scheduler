@@ -30,6 +30,7 @@ static struct task_struct* scanner_thread = NULL;
 static struct mm_struct* my_mm;
 
 struct page_desc {
+    int accesses;
     int last_touched;
     int node;
 };
@@ -63,13 +64,16 @@ print_page_access_data(struct seq_file * m)
     int i;
     int j;
 
-    seq_puts(m, "vma,pfn,count,node\n");
+    seq_puts(m, "vma,pfn,accesses,last_touch,node\n");
     for (i = 0; i < new_vmas_size; ++i){
 	for (j = 0; j < new_vmas[i].num_pages; ++j){
 	    if (seq_has_overflowed(m)){
 		return 1;
 	    } else {
-		seq_printf(m, "%d,%d,%d,%d\n", i, j, new_vmas[i].page_accesses[j].last_touched, new_vmas[i].page_accesses[j].node);
+		seq_printf(m, "%d,%d,%d,%d,%d\n", i, j,
+			   new_vmas[i].page_accesses[j].accesses,
+			   new_vmas[i].page_accesses[j].last_touched,
+			   new_vmas[i].page_accesses[j].node);
 	    }
 	}
     }
@@ -283,10 +287,10 @@ pte_callback(pte_t *pte,
     page = pte_page(*pte);
     /* printk(KERN_INFO "refcount on the page is %d\n", page_count(page)); */
     pgdat = page_pgdat(page);
-    /* if (pgdat->node_id == 0) */
-    /* 	++walk_data->n0; */
-    /* else */
-    /* 	++walk_data->n1; */
+    if (pgdat->node_id == 0)
+    	++walk_data->n0;
+    else
+    	++walk_data->n1;
     /* printk(KERN_INFO "NUMA NODE %d\n", pgdat->node_id); */
     /* { */
     /* 	int is_lru; */
@@ -299,8 +303,9 @@ pte_callback(pte_t *pte,
     if (pte_young(*pte)){
     	*pte = pte_mkold(*pte);//mkold
 	walk_data->vma_desc->page_accesses[pg_off].last_touched = current_period;
+	walk_data->vma_desc->page_accesses[pg_off].accesses++;
 	if (pgdat->node_id == 1){
-	    should_move = 1; //fault back in
+	    //should_move = 1; //fault back in
 	}
     } else {
 	if (current_period - walk_data->vma_desc->page_accesses[pg_off].last_touched > threshold){
@@ -308,9 +313,8 @@ pte_callback(pte_t *pte,
 	}
     }
     
-    
     if (PageLRU(page) && walk_data->list_size < max_pages &&
-    	!PageUnevictable(page) && should_move){
+    	!PageUnevictable(page) && should_move && pgdat->node_id == 0){
     	/*Try to add page to list */
     	/* 2) */
     	status = my_isolate_lru_page(page);
@@ -328,7 +332,7 @@ pte_callback(pte_t *pte,
     	/* 4) */
     	list_add(&(page->lru), migration_list);
     	++walk_data->list_size;
-    	printk(KERN_INFO "Page Added To Migration List\n");
+    	/* printk(KERN_INFO "Page Added To Migration List\n"); */
     }
     
     walk_data->user_pages_4KB++;
@@ -413,5 +417,5 @@ count_vmas(struct mm_struct * mm)
     if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");
     
     /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
-    /* printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1); */
+    printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);
 }

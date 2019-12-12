@@ -29,11 +29,16 @@ static struct task_struct* scanner_thread = NULL;
 
 static struct mm_struct* my_mm;
 
+struct page_desc {
+    int last_touched;
+    int node;
+};
+
 struct vma_desc {
     struct vm_area_struct * vma; /*Use as key*/
     unsigned long vm_start;
     unsigned long vm_end;
-    int *         page_accesses;
+    struct page_desc *         page_accesses;
     int           num_pages;
 };
 
@@ -52,19 +57,23 @@ free_page_access_arrays(void)
 }
 
 /*Make sure we dont free the data before this*/
-void
-print_page_access_data(void)
+int
+print_page_access_data(struct seq_file * m)
 {
     int i;
     int j;
-    int pages;
 
-    printk(KERN_INFO "vma,pfn,count\n");
+    seq_puts(m, "vma,pfn,count,node\n");
     for (i = 0; i < new_vmas_size; ++i){
 	for (j = 0; j < new_vmas[i].num_pages; ++j){
-	    printk(KERN_INFO "%d,%d,%d\n", i, j, new_vmas[i].page_accesses[j]);
+	    if (seq_has_overflowed(m)){
+		return 1;
+	    } else {
+		seq_printf(m, "%d,%d,%d,%d\n", i, j, new_vmas[i].page_accesses[j].last_touched, new_vmas[i].page_accesses[j].node);
+	    }
 	}
     }
+    return 0;
 }
 
 static int
@@ -82,7 +91,7 @@ track_vma(struct vm_area_struct * vma, int idx)
 	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;
     desc.num_pages = num_pages;
     
-    desc.page_accesses = kzalloc(num_pages * sizeof(int), GFP_KERNEL);
+    desc.page_accesses = kzalloc(num_pages * sizeof(struct page_desc), GFP_KERNEL);
     if (IS_ERR(desc.page_accesses)){
 	printk(KERN_EMERG "Error Allocating page access vector\n");
 	return -1;
@@ -241,6 +250,10 @@ fake_isolate_lru_page my_isolate_lru_page = NULL;
 fake_vma_is_stack_for_current my_vma_is_stack_for_current = NULL;
 fake_migrate_pages my_migrate_pages = NULL;
 
+static int current_period = 0;
+static int threshold = 10;
+static int max_pages = 1000;
+
 static int
 pte_callback(pte_t *pte,
 	     unsigned long addr,
@@ -254,6 +267,7 @@ pte_callback(pte_t *pte,
     struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
     struct list_head * migration_list = walk_data->list;
     int pg_off;
+    int should_move;
     
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
@@ -268,7 +282,7 @@ pte_callback(pte_t *pte,
     /* Holy Shit */
     page = pte_page(*pte);
     /* printk(KERN_INFO "refcount on the page is %d\n", page_count(page)); */
-    /* pgdat = page_pgdat(page); */
+    pgdat = page_pgdat(page);
     /* if (pgdat->node_id == 0) */
     /* 	++walk_data->n0; */
     /* else */
@@ -279,36 +293,43 @@ pte_callback(pte_t *pte,
     /* 	is_lru = PageLRU(page); */
     /* 	printk(KERN_INFO "is lru? : %d\n", is_lru); */
     /* } */
-
+    should_move = 0;
+    pg_off = (addr - walk_data->vma_desc->vm_start) >> 12;
+    walk_data->vma_desc->page_accesses[pg_off].node = pgdat->node_id;
     if (pte_young(*pte)){
     	*pte = pte_mkold(*pte);//mkold
-	pg_off = (addr - walk_data->vma_desc->vm_start) >> 12;
-	walk_data->vma_desc->page_accesses[pg_off]++;
+	walk_data->vma_desc->page_accesses[pg_off].last_touched = current_period;
+	if (pgdat->node_id == 1){
+	    should_move = 1; //fault back in
+	}
+    } else {
+	if (current_period - walk_data->vma_desc->page_accesses[pg_off].last_touched > threshold){
+	    should_move = 1;
+	}
     }
     
-    /*Page Access Stats*/
+    
+    if (PageLRU(page) && walk_data->list_size < max_pages &&
+    	!PageUnevictable(page) && should_move){
+    	/*Try to add page to list */
+    	/* 2) */
+    	status = my_isolate_lru_page(page);
+    	if (status){
+    	    printk(KERN_EMERG "ERROR ISOLATING\n");
+    	    return 0;
+    	}
 
-    /* if (PageLRU(page) && walk_data->list_size < 10 && */
-    /* 	!PageUnevictable(page) && pgdat->node_id == 0){ */
-    /* 	/\*Try to add page to list *\/ */
-    /* 	/\* 2) *\/ */
-    /* 	status = my_isolate_lru_page(page); */
-    /* 	if (status){ */
-    /* 	    printk(KERN_EMERG "ERROR ISOLATING\n"); */
-    /* 	    return 0; */
-    /* 	} */
+    	/* 3) */
+    	if (PageUnevictable(page)){
+    	    printk(KERN_EMERG "PAGE IS UNEVICTABLE... PUT BACK!!\n");
+    	    return 0;
+    	}
 
-    /* 	/\* 3) *\/ */
-    /* 	if (PageUnevictable(page)){ */
-    /* 	    printk(KERN_EMERG "PAGE IS UNEVICTABLE... PUT BACK!!\n"); */
-    /* 	    return 0; */
-    /* 	} */
-
-    /* 	/\* 4) *\/ */
-    /* 	list_add(&(page->lru), migration_list); */
-    /* 	++walk_data->list_size; */
-    /* 	printk(KERN_INFO "Page Added To Migration List\n"); */
-    /* } */
+    	/* 4) */
+    	list_add(&(page->lru), migration_list);
+    	++walk_data->list_size;
+    	printk(KERN_INFO "Page Added To Migration List\n");
+    }
     
     walk_data->user_pages_4KB++;
 
@@ -361,6 +382,8 @@ count_vmas(struct mm_struct * mm)
 	    .pte_entry     = pte_callback,
 	    .hugetlb_entry = hugetlb_callback,
 	};
+
+    current_period++;
     
     down_write(&(mm->mmap_sem));
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
@@ -383,12 +406,12 @@ count_vmas(struct mm_struct * mm)
     /*Figure out how to put stuff back on the LRU if we can't move it */
     /*Unless of course, migrate_pages does this already */
 
-    /* status = my_migrate_pages(&migration_list, pg_sched_alloc, */
-    /* 			   NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED); */
+    status = my_migrate_pages(&migration_list, pg_sched_alloc,
+    			   NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
 
-    /* if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status); */
-    /* if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n"); */
+    if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status);
+    if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");
     
-    printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
-    printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);
+    /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
+    /* printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1); */
 }

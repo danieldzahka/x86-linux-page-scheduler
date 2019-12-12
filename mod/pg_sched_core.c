@@ -5,6 +5,7 @@
 #include <linux/fs.h>
 #include <linux/kallsyms.h>
 #include <linux/seq_file.h>
+#include <linux/proc_fs.h>
 
 #include <pg_sched.h>
 #include <pg_sched_priv.h>
@@ -22,9 +23,12 @@ module_param(log_nsec, ulong, 0);
 /* seq_file stuff */
 static int
 pg_sched_data_show(struct seq_file *m,
-	      void *v)
+		   void *v)
 {
-    
+
+    if (print_page_access_data(m)){
+	printk(KERN_EMERG "Seq File has overflowed\n");
+    }
     return 0;
 }
 
@@ -92,10 +96,10 @@ pg_sched_release(struct inode * inodep,
     }
 
     //print out data
-    print_page_access_data();
+    /* print_page_access_data(); */
     
     //free memory
-    free_page_access_arrays();
+    /* free_page_access_arrays(); */
   
     return 0;
 }
@@ -139,6 +143,8 @@ dev_handle =
     .fops  = &pg_sched_fops
 };
 
+static struct proc_dir_entry * entry;
+
 static int __init 
 pg_sched_init(void)
 {
@@ -149,6 +155,8 @@ pg_sched_init(void)
         return status;
     }
 
+    entry = proc_create("pg_sched_data", 0, NULL, &pg_sched_data_fops);
+
     printk(KERN_INFO "Initialized page_scheduler module\n");
 
     return 0;
@@ -157,8 +165,9 @@ pg_sched_init(void)
 static void __exit
 pg_sched_exit(void ) 
 {
+    free_page_access_arrays(); //remove later
     misc_deregister(&dev_handle);
-
+    remove_proc_entry("pg_sched_data",NULL);
     printk(KERN_INFO "Unloaded page_scheduler module\n");
 }
 

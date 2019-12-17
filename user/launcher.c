@@ -411,7 +411,7 @@ handle_sigchld(int    fd,
     pid = waitpid(p_data->pid, &ex_status, WNOHANG);
     if (pid == p_data->pid) {
 
-        printf("target died\n");
+        /* printf("target died\n"); */
         fflush(stdout);
         
         if (WIFEXITED(ex_status)) {

@@ -8,6 +8,9 @@
 #include <linux/proc_fs.h>
 #include <linux/kref.h>
 #include <linux/list.h>
+#include <linux/pid.h>
+
+#include <linux/sched/mm.h>
 
 #include <pg_sched.h>
 #include <pg_sched_priv.h>
@@ -35,6 +38,8 @@ struct tracked_process {
         } period;
     } policy;
 
+    struct mm_struct * mm;
+
     struct kref refcount;
     struct list_head linkage;
     void (*release) (struct kref * refc);
@@ -45,6 +50,7 @@ tracked_process_destructor(struct tracked_process * this)
 {
     printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
     //recursively free any nested objects
+    mmdrop(this->mm);// -1 for release
     kfree(this);
 }
 
@@ -57,24 +63,47 @@ tracked_process_release(struct kref * refc)
     tracked_process_destructor(this);
 }
 
-static void
+static int
 init_tracked_process(struct tracked_process * this,
                      pid_t pid)
 {
+    struct pid* p;
+    struct task_struct * tsk;
+    
     this->pid = pid;
     this->policy.scans_to_be_idle = 10;
     this->policy.period.sec  = 1;
     this->policy.period.nsec = 0;
     this->release = tracked_process_release;
 
+    p = find_get_pid(pid); /* +1 temp*/
+    if (!p){
+        printk(KERN_ALERT "Error: pid struct not found!!");
+        return -1;
+    }
+
+    tsk = pid_task(p, PIDTYPE_PID); /* Does not elevate the refcount */
+    if (!tsk){
+        printk(KERN_ALERT "Error: task struct not found!!");
+        return -1;
+    }
+    
+    this->mm = tsk->mm;
+    mmgrab(this->mm); // +1 for ref
+
+    put_pid(p); /* -1 temp */
+    
     kref_init(&this->refcount); /* +1 for global linked list */
     INIT_LIST_HEAD(&this->linkage);
+
+    return 0;
 }
 
 static int
 allocate_tracker_and_add_to_list(pid_t pid)
 {
     struct tracked_process * tracked_pid;
+    int status;
 
     tracked_pid = kzalloc(sizeof(*tracked_pid), GFP_KERNEL);
     if (!tracked_pid){
@@ -82,7 +111,12 @@ allocate_tracker_and_add_to_list(pid_t pid)
         return -1;
     }
     
-    init_tracked_process(tracked_pid, pid);
+    status = init_tracked_process(tracked_pid, pid);
+    if (status){
+        printk(KERN_ALERT "struct track process init failed\n");
+        return status;
+    }
+    
     list_add(&tracked_pid->linkage, &pg_sched_tracked_pids);
 
     return 0;

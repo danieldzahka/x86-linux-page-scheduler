@@ -25,4 +25,20 @@ extern fake_isolate_lru_page my_isolate_lru_page;
 extern fake_vma_is_stack_for_current my_vma_is_stack_for_current;
 extern fake_migrate_pages my_migrate_pages;
 
+struct page_desc {
+    int accesses;
+    int last_touched;
+    int node;
+};
+
+struct vma_desc {
+    struct vm_area_struct * vma; /*Use as key*/
+    unsigned long           vm_start;
+    unsigned long           vm_end;
+    struct page_desc *      page_accesses;
+    int                     num_pages;
+
+    struct list_head linkage; /* struct tracked_process -> vma_list */
+};
+
 #endif /* __PG_SCHED_MEM_H__ */

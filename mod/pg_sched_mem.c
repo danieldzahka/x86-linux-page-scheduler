@@ -29,19 +29,6 @@ static struct task_struct* scanner_thread = NULL;
 
 static struct mm_struct* my_mm;
 
-struct page_desc {
-    int accesses;
-    int last_touched;
-    int node;
-};
-
-struct vma_desc {
-    struct vm_area_struct * vma; /*Use as key*/
-    unsigned long vm_start;
-    unsigned long vm_end;
-    struct page_desc *         page_accesses;
-    int           num_pages;
-};
 
 /* For Additional Anon VMAs */
 static int new_vmas_size = 0;

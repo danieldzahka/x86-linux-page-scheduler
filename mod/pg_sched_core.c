@@ -25,11 +25,11 @@ static unsigned long log_nsec = 0;
 module_param(log_sec, ulong, 0);
 module_param(log_nsec, ulong, 0);
 
-//maybe export?
 static LIST_HEAD(pg_sched_tracked_pids);
 
 struct tracked_process {
     pid_t pid;
+    int migration_enabled;
     struct {
         int scans_to_be_idle;
         struct {
@@ -41,15 +41,35 @@ struct tracked_process {
     struct mm_struct * mm;
 
     struct kref refcount;
-    struct list_head linkage;
+    struct list_head linkage; /* List: (static global) pg_sched_tracked_pids */
+    struct list_head vma_desc_list; /* VMA's that we are watching */
     void (*release) (struct kref * refc);
 };
+
+static void
+free_vma_desc(struct vma_desc * desc)
+{
+    kfree(desc->page_accesses);
+    kfree(desc);
+}
+
+static void
+free_vma_desc_list(struct list_head * list)
+{
+    struct vma_desc * desc;
+    
+    while (!list_empty(list)){
+        desc = list_first_entry(list, struct vma_desc, linkage);
+        free_vma_desc(desc);
+    }    
+}
 
 static void
 tracked_process_destructor(struct tracked_process * this)
 {
     printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
     //recursively free any nested objects
+    free_vma_desc_list();
     mmdrop(this->mm);// -1 for release
     kfree(this);
 }
@@ -71,6 +91,7 @@ init_tracked_process(struct tracked_process * this,
     struct task_struct * tsk;
     
     this->pid = pid;
+    this->migration_enabled = 0;
     this->policy.scans_to_be_idle = 10;
     this->policy.period.sec  = 1;
     this->policy.period.nsec = 0;
@@ -95,6 +116,7 @@ init_tracked_process(struct tracked_process * this,
     
     kref_init(&this->refcount); /* +1 for global linked list */
     INIT_LIST_HEAD(&this->linkage);
+    INIT_LIST_HEAD(&this->vma_desc_list);
 
     return 0;
 }

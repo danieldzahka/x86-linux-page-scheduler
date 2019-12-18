@@ -15,6 +15,8 @@
 
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/ptrace.h>
+#include <sys/ioctl.h>
 
 #include <pg_sched.h>
 #include "hashtable.h"
@@ -23,6 +25,7 @@
 
 struct program_data {
     char * this_exe;
+    int dev_fd;
     
     /* target data */
     char * exe;
@@ -335,6 +338,54 @@ handle_stdin(int    fd,
     return -1;
 }
 
+static int
+pg_sched_untrack_pid(struct program_data * data)
+{
+    int status;
+    struct untrack_pid_arg arg = {
+        .pid = data->pid
+    };
+
+    status = ioctl(data->dev_fd, PG_SCHED_UNTRACK_PID, &arg);
+    if (status == -1){
+        puts("IOCTL ERROR\n");
+        return status;
+    }
+    
+    status = close(data->dev_fd);
+    if (status){
+        puts("Error closing " PG_SCHED_DEVICE_PATH "\n");
+        return status;
+    }
+
+    return 0;
+}
+
+static int
+pg_sched_track_pid(struct program_data * data)
+{
+
+    int status;
+    int dev_open_flags = 0;
+    struct track_pid_arg arg = {
+        .pid = data->pid
+    };
+
+    data->dev_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags);
+    if (data->dev_fd == -1){
+        fprintf(stderr, "Couldn't open " PG_SCHED_DEVICE_PATH "\n");
+        return -1;
+    }
+
+    status = ioctl(data->dev_fd, PG_SCHED_TRACK_PID, &arg);
+    if (status == -1){
+        fprintf(stderr, "IOCTL ERROR\n");
+        return status;
+    }
+    
+    return 0;
+}
+
 /*
  * teardown pipes and other state associated with
  * the target
@@ -342,6 +393,15 @@ handle_stdin(int    fd,
 static void
 teardown_target(struct program_data * data)
 {
+
+    int status;
+    
+    /* Tell module to release mm struct, close dev */
+    status = pg_sched_untrack_pid(data);
+    if (status){
+        fprintf(stderr, "Error: Could not untrack target pid\n");
+    }
+    
     close(data->target_infd[1]);
     close(data->target_outfd[0]);
     close(data->target_errfd[0]);
@@ -789,18 +849,61 @@ out_in:
 static int
 target(struct program_data * data)
 {
-    /* int status; */
+    int status;
 
-    /* allow self to be ptrace'd */
-    /* status = ptrace(PTRACE_TRACEME, 0, NULL, NULL); */
-    /* if (status != 0) { */
-    /*     fprintf(stderr, "Failed to mark self as PTRACE-able: %s\n",  */
-    /*         strerror(errno)); */
-    /*     exit(-1); */
-    /* } */
+    /* allow self to be ptraced */
+    status = ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+    if (status != 0) {
+        fprintf(stderr, "Failed to mark self as PTRACE-able: %s\n",
+            strerror(errno));
+        exit(-1);
+    }
 
     /* Running speed trials, still standing in place... */
     return execve(data->exe, data->argv, data->envp);
+}
+
+
+/*
+ * waitpid() will return once the tracee invokes exec
+ */
+static int
+attach_to_pid_at_entry_point(struct program_data * data)
+{
+    int t_status, status;
+
+    waitpid(data->pid, &t_status, 0);
+    if (WIFEXITED(t_status)) {
+        fprintf(stderr, "Target process exited with status %d\n", 
+                WEXITSTATUS(t_status));
+        return -1;
+    }
+
+    if (!WIFSTOPPED(t_status)) {
+        fprintf(stderr, "Target did not stop on exec?\n");
+        return -1;
+    }
+
+    printf("Target (%s) stopped at entry point\n", 
+        data->exe
+    );
+
+    /* Latch onto the stopped process */
+    status = pg_sched_track_pid(data);
+    if (status){
+        fprintf(stderr, "Error: Could not track target pid\n");
+        return status;
+    }
+    
+    /* Tell the target to resume */
+    errno = 0;
+    ptrace(PTRACE_CONT, data->pid, NULL, NULL);
+    if (errno){
+        fprintf(stderr, "Error: Ptrace continue failed\n");
+        return -1;
+    }
+
+    return 0;
 }
 
 static int
@@ -865,11 +968,11 @@ setup_target(struct program_data * data)
     /* ptrace the child, installing a breakpoint at its entry point before
      * transfering control to the shadow
      */
-    /* status = stop_target_at_entry_point(data); */
-    /* if (status != 0) { */
-    /*     fprintf(stderr, "Failed to run target to its entry point\n"); */
-    /*     return 0; */
-    /* } */
+    status = attach_to_pid_at_entry_point(data);
+    if (status != 0) {
+        fprintf(stderr, "Failed to run target to its entry point\n");
+        return 0;
+    }
 
     return 0;
 }
@@ -977,5 +1080,7 @@ int main(int     argc,
     if (data->pid != PG_SCHED_NULL_PID)
         kill_and_teardown_target(data);
 
+    
+    
     return status;
 }

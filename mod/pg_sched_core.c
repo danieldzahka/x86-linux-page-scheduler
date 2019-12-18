@@ -99,7 +99,7 @@ pg_sched_ioctl(struct file * filp,
             int n;
             
             n = copy_from_user(&my_arg, (void *) arg, sizeof(struct track_pid_arg));
-            if (n != sizeof(struct track_pid_arg)){
+            if (n){
                 printk(KERN_ALERT "Could not read IOCTL ARG\n");
                 status = -1;
                 break;
@@ -115,7 +115,7 @@ pg_sched_ioctl(struct file * filp,
             int n;
             
             n = copy_from_user(&my_arg, (void *) arg, sizeof(struct untrack_pid_arg));
-            if (n != sizeof(struct untrack_pid_arg)){
+            if (n){
                 printk(KERN_ALERT "Could not read IOCTL ARG\n");
                 status = -1;
                 break;

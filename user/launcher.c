@@ -394,14 +394,6 @@ static void
 teardown_target(struct program_data * data)
 {
 
-    int status;
-    
-    /* Tell module to release mm struct, close dev */
-    status = pg_sched_untrack_pid(data);
-    if (status){
-        fprintf(stderr, "Error: Could not untrack target pid\n");
-    }
-    
     close(data->target_infd[1]);
     close(data->target_outfd[0]);
     close(data->target_errfd[0]);
@@ -417,6 +409,14 @@ teardown_target(struct program_data * data)
 static void
 kill_and_teardown_target(struct program_data * data)
 {
+    int status;
+    
+    /* Tell module to release mm struct, close dev */
+    status = pg_sched_untrack_pid(data);
+    if (status){
+        fprintf(stderr, "Error: Could not untrack target pid\n");
+    }
+    
     kill(data->pid, SIGKILL);
     waitpid(data->pid, NULL, 0);
 
@@ -462,11 +462,19 @@ handle_sigchld(int    fd,
     pid_t pid;
     char byte;
     int ex_status;
+    int status;
 
     /* consume byte from self pipe */
     assert(read(fd, &byte, sizeof(char)) == sizeof(char));
     assert(byte == 'c');
 
+
+    /* Tell module to release mm struct, close dev */
+    status = pg_sched_untrack_pid(p_data);
+    if (status){
+        fprintf(stderr, "Error: Could not untrack target pid\n");
+    }
+    
     /* see if target is down */
     pid = waitpid(p_data->pid, &ex_status, WNOHANG);
     if (pid == p_data->pid) {

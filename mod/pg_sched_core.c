@@ -6,6 +6,8 @@
 #include <linux/kallsyms.h>
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
+#include <linux/kref.h>
+#include <linux/list.h>
 
 #include <pg_sched.h>
 #include <pg_sched_priv.h>
@@ -19,6 +21,95 @@ static unsigned long log_sec = 1;
 static unsigned long log_nsec = 0; 
 module_param(log_sec, ulong, 0);
 module_param(log_nsec, ulong, 0);
+
+//maybe export?
+static LIST_HEAD(pg_sched_tracked_pids);
+
+struct tracked_process {
+    pid_t pid;
+    struct {
+        int scans_to_be_idle;
+        struct {
+            unsigned long sec;
+            unsigned long nsec;
+        } period;
+    } policy;
+
+    struct kref refcount;
+    struct list_head linkage;
+    void (*release) (struct kref * refc);
+};
+
+static void
+tracked_process_destructor(struct tracked_process * this)
+{
+    printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
+    //recursively free any nested objects
+    kfree(this);
+}
+
+static void
+tracked_process_release(struct kref * refc)
+{
+    struct tracked_process * this;
+
+    this = container_of(refc, struct tracked_process, refcount);
+    tracked_process_destructor(this);
+}
+
+static void
+init_tracked_process(struct tracked_process * this,
+                     pid_t pid)
+{
+    this->pid = pid;
+    this->policy.scans_to_be_idle = 10;
+    this->policy.period.sec  = 1;
+    this->policy.period.nsec = 0;
+    this->release = tracked_process_release;
+
+    kref_init(&this->refcount); /* +1 for global linked list */
+    INIT_LIST_HEAD(&this->linkage);
+}
+
+static int
+allocate_tracker_and_add_to_list(pid_t pid)
+{
+    struct tracked_process * tracked_pid;
+
+    tracked_pid = kzalloc(sizeof(*tracked_pid), GFP_KERNEL);
+    if (!tracked_pid){
+        printk(KERN_ALERT "Could not allocate tracker struct\n");
+        return -1;
+    }
+    
+    init_tracked_process(tracked_pid, pid);
+    list_add(&tracked_pid->linkage, &pg_sched_tracked_pids);
+
+    return 0;
+}
+
+static void
+remove_tracker_from_list(pid_t pid)
+{
+    struct list_head * target, * pos;
+    struct tracked_process * obj;
+
+    obj = NULL;
+    target = NULL;
+    
+    list_for_each(pos, &pg_sched_tracked_pids){
+        obj = list_entry(pos, struct tracked_process, linkage);
+        if (obj->pid == pid){
+            target = pos;
+            break;
+        }
+    }
+
+    WARN_ON(obj == NULL || target == NULL);
+    
+    if (target != NULL) list_del(target); /* Remove from List */
+    if (obj != NULL) kref_put(&obj->refcount, obj->release); //should probably call d'tor
+}
 
 /* seq_file stuff */
 static int
@@ -105,6 +196,11 @@ pg_sched_ioctl(struct file * filp,
                 break;
             }
             printk(KERN_INFO "tracking pid: %d\n", my_arg.pid);
+            status = allocate_tracker_and_add_to_list(my_arg.pid);
+            if (status){
+                printk(KERN_ALERT "Error Allocating tracker\n");
+                break;
+            }
         }
         status = 0;
         break;
@@ -121,6 +217,7 @@ pg_sched_ioctl(struct file * filp,
                 break;
             }
             printk(KERN_INFO "untracking pid: %d\n", my_arg.pid);
+            remove_tracker_from_list(my_arg.pid);
         }
         status = 0;
         break;

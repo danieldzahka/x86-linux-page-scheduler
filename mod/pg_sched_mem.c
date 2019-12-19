@@ -14,6 +14,8 @@
 #include <linux/gfp.h>
 
 #include <pg_sched_mem.h>
+#include <pg_sched_priv.h>
+
 
 /* #define MAX_INIT_VMAS 20 */
 /* #define MAX_NEW_VMAS 20 */
@@ -61,39 +63,6 @@
 /*     return 0; */
 /* } */
 
-/*Do something, sleep. Rinse and repeat */
-int
-scanner_func(void * args)
-{
-    struct tracked_process * tracked_proc_struct;
-
-    tracked_proc_struct = (struct tracked_process *) args;
-    
-    while(1){
-	/* count_vmas(my_mm); */
-        printk(KERN_INFO "Hello\n");
-	set_current_state(TASK_INTERRUPTIBLE);
-	schedule();
-	if(kthread_should_stop()){
-	    break;
-	}
-    }
-    printk(KERN_ALERT "Exiting the loop, Terminating thread\n");
-    return 0;
-}
-
-/* timer function */
-static enum hrtimer_restart
-expiration_func(struct hrtimer * tim,
-                ktime_t * kt,
-                struct task_struct* scanner_thread)
-{
-    wake_up_process(scanner_thread);
-    hrtimer_forward_now(tim, *kt);
-
-    return HRTIMER_RESTART;
-}
-
 /* int */
 /* launch_scanner_kthread(struct mm_struct * mm, */
 /* 		       unsigned long log_sec, */
@@ -112,33 +81,33 @@ expiration_func(struct hrtimer * tim,
 /* } */
 
 /*This has a side effect in that it uses static var init_vmas_xxx */
-void
-register_init_vmas(struct mm_struct * mm)
-{
-    struct vm_area_struct *vma;
+/* void */
+/* register_init_vmas(struct mm_struct * mm) */
+/* { */
+/*     struct vm_area_struct *vma; */
 
-    down_write(&(mm->mmap_sem));
-    for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
-	/* This can never end well... */
-	if (!vma_is_anonymous(vma)) continue; /*Only interested in Anon*/
-	/* if (my_vma_is_stack_for_current(vma)) continue; /\*Don't count the stack*\/ */
-	if (vma->vm_flags & VM_EXEC) continue;
-	if (vma->vm_flags & VM_SPECIAL) continue; /* Dynamically Loaded Code Pages */
+/*     down_write(&(mm->mmap_sem)); */
+/*     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){ */
+/* 	/\* This can never end well... *\/ */
+/* 	if (!vma_is_anonymous(vma)) continue; /\*Only interested in Anon*\/ */
+/* 	/\* if (my_vma_is_stack_for_current(vma)) continue; /\\*Don't count the stack*\\/ *\/ */
+/* 	if (vma->vm_flags & VM_EXEC) continue; */
+/* 	if (vma->vm_flags & VM_SPECIAL) continue; /\* Dynamically Loaded Code Pages *\/ */
 
-	init_vmas[init_vmas_size++] = vma;
-    }
-    up_write(&(mm->mmap_sem));
-}
+/* 	init_vmas[init_vmas_size++] = vma; */
+/*     } */
+/*     up_write(&(mm->mmap_sem)); */
+/* } */
 
-static int
-is_new_vma(struct vm_area_struct *vma)
-{
-    int i;
-    for (i = 0; i < init_vmas_size; ++i){
-	if (vma == init_vmas[i]) return false;
-    }
-    return true;
-}
+/* static int */
+/* is_new_vma(struct vm_area_struct *vma) */
+/* { */
+/*     int i; */
+/*     for (i = 0; i < init_vmas_size; ++i){ */
+/* 	if (vma == init_vmas[i]) return false; */
+/*     } */
+/*     return true; */
+/* } */
 
 struct pg_walk_data
 {
@@ -312,11 +281,11 @@ count_vmas(struct mm_struct * mm)
 	if (my_vma_is_stack_for_current(vma)) continue; /*Don't count the stack*/
 	if (vma->vm_flags & VM_EXEC) continue;
 	if (vma->vm_flags & VM_SPECIAL) continue; /* Dynamically Loaded Code Pages */
-	if (!is_new_vma(vma)) continue;
+	/* if (!is_new_vma(vma)) continue; */
 
 	/* printk(KERN_EMERG "VMA ADDRESS: %lx\n", vma->vm_start); */
 	pg_walk_data.list = &migration_list;
-	pg_walk_data.vma_desc = get_vma_desc(vma);
+	pg_walk_data.vma_desc = NULL;/* get_vma_desc(vma); */
 	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
 	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
     }

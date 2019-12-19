@@ -9,6 +9,8 @@
 #include <linux/kref.h>
 #include <linux/list.h>
 #include <linux/pid.h>
+#include <linux/hrtimer.h>
+#include <linux/sched.h>
 
 #include <linux/sched/mm.h>
 
@@ -20,63 +22,79 @@
 int pg_sched_debug = 0;
 module_param(pg_sched_debug, int, 0644);
 
-static unsigned long log_sec = 1;
-static unsigned long log_nsec = 0; 
-module_param(log_sec, ulong, 0);
-module_param(log_nsec, ulong, 0);
+/* static unsigned long log_sec = 1; */
+/* static unsigned long log_nsec = 0;  */
+/* module_param(log_sec, ulong, 0); */
+/* module_param(log_nsec, ulong, 0); */
 
 static LIST_HEAD(pg_sched_tracked_pids);
 
-struct intial_vma {
-    struct vma_area_struct * vma;
-    struct list_head linkage;
+static struct {
+    ktime_t * kt;
+    struct task_struct* scanner_thread;
+} global_timer_params;
+
+/* timer function */
+/* Wow, I can't pass non static data to this... f&*# */
+enum hrtimer_restart
+expiration_func(struct hrtimer * tim)
+{
+    wake_up_process(global_timer_params.scanner_thread);
+    hrtimer_forward_now(tim, *global_timer_params.kt);
+
+    return HRTIMER_RESTART;
 }
 
-struct page_desc {
-    int accesses;
-    int last_touched;
-    int node;
-};
+/* struct initial_vma { */
+/*     struct vma_area_struct * vma; */
+/*     struct list_head linkage; */
+/* }; */
 
-struct vma_desc {
-    struct vm_area_struct * vma; /*Use as key*/
-    unsigned long           vm_start;
-    unsigned long           vm_end;
-    struct page_desc *      page_accesses;
-    int                     num_pages;
+/* struct page_desc { */
+/*     int accesses; */
+/*     int last_touched; */
+/*     int node; */
+/* }; */
 
-    struct list_head linkage; /* struct tracked_process -> vma_list */
-};
+/* struct vma_desc { */
+/*     struct vm_area_struct * vma; /\*Use as key*\/ */
+/*     unsigned long           vm_start; */
+/*     unsigned long           vm_end; */
+/*     struct page_desc *      page_accesses; */
+/*     int                     num_pages; */
 
-struct tracked_process {
-    pid_t pid;
-    int migration_enabled;
-    struct {
-        int scans_to_be_idle;
-        struct {
-            unsigned long sec;
-            unsigned long nsec;
-        } period;
-    } policy;
+/*     struct list_head linkage; /\* struct tracked_process -> vma_list *\/ */
+/* }; */
 
-    struct mm_struct * mm;
+/* struct tracked_process { */
+/*     pid_t pid; */
+/*     int migration_enabled; */
+/*     struct { */
+/*         int scans_to_be_idle; */
+/*         struct { */
+/*             unsigned long sec; */
+/*             unsigned long nsec; */
+/*         } period; */
+/*     } policy; */
 
-    struct kref refcount;
-    struct list_head linkage; /* List: (static global) pg_sched_tracked_pids */
+/*     struct mm_struct * mm; */
 
-    struct list_head vma_desc_list; /* VMA's that we are watching */
-    int vma_desc_list_length; /* For debugging merged or disappearing vma's */
+/*     struct kref refcount; */
+/*     struct list_head linkage; /\* List: (static global) pg_sched_tracked_pids *\/ */
 
-    struct list_head inital_vma_list; /*.so's and other stuff I dont want to touch*/
+/*     struct list_head vma_desc_list; /\* VMA's that we are watching *\/ */
+/*     int vma_desc_list_length; /\* For debugging merged or disappearing vma's *\/ */
+
+/*     struct list_head initial_vma_list; /\*.so's and other stuff I dont want to touch*\/ */
     
-    struct {
-        ktime_t kt;
-        struct hrtimer timer;
-        struct task_struct* scanner_thread;
-    } scanner_thread_struct;
+/*     struct { */
+/*         ktime_t kt; */
+/*         struct hrtimer timer; */
+/*         struct task_struct* scanner_thread; */
+/*     } scanner_thread_struct; */
     
-    void (*release) (struct kref * refc);
-};
+/*     void (*release) (struct kref * refc); */
+/* }; */
 
 static void
 free_vma_desc(struct vma_desc * desc)
@@ -109,14 +127,33 @@ free_inital_vma_list(struct list_head * list)
     }    
 }
 
-static void
-tracked_process_destructor(struct tracked_process * this)
+/*Do something, sleep. Rinse and repeat */
+int
+scanner_func(void * args)
 {
-    int status;
-    status = 0;
+    struct tracked_process * tracked_proc_struct;
 
-    printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
+    tracked_proc_struct = (struct tracked_process *) args;
+    
+    while(1){
+	/* count_vmas(my_mm); */
+        printk(KERN_INFO "Hello\n");
+	set_current_state(TASK_INTERRUPTIBLE);
+	schedule();
+	if(kthread_should_stop()){
+	    break;
+	}
+    }
+    printk(KERN_ALERT "Exiting the loop, Terminating thread\n");
+    kref_put(&tracked_proc_struct->refcount, tracked_proc_struct->release);
+    return 0;
+}
 
+static void
+stop_scanner_thread(struct tracked_process * this)
+{
+    int status = 0;
+    
     /*Cancel Timer if active*/
     if (hrtimer_active(&this->scanner_thread_struct.timer))
         hrtimer_cancel(&this->scanner_thread_struct.timer);
@@ -126,6 +163,12 @@ tracked_process_destructor(struct tracked_process * this)
         status = kthread_stop(this->scanner_thread_struct.scanner_thread);
 
     if (status) printk(KERN_EMERG "ERROR: Could not kill kthread\n");
+}
+
+static void
+tracked_process_destructor(struct tracked_process * this)
+{
+    printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
     
     free_vma_desc_list(&this->vma_desc_list);
     free_inital_vma_list(&this->initial_vma_list);
@@ -162,7 +205,6 @@ init_tracked_process(struct tracked_process * this,
     this->scanner_thread_struct.kt = ktime_set(log_sec, log_nsec);
     hrtimer_init(&this->scanner_thread_struct.timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
     this->scanner_thread_struct.timer.function = expiration_func;
-
     
     p = find_get_pid(pid); /* +1 temp*/
     if (!p){
@@ -190,7 +232,7 @@ init_tracked_process(struct tracked_process * this,
     INIT_LIST_HEAD(&this->initial_vma_list);
     {
         struct vm_area_struct *vma;
-        struct intial_vma * init_vma;
+        struct initial_vma * init_vma;
 
         down_write(&(this->mm->mmap_sem));
         for (vma = this->mm->mmap; vma != NULL; vma = vma->vm_next){
@@ -200,7 +242,7 @@ init_tracked_process(struct tracked_process * this,
                 (vma->vm_flags & VM_SPECIAL) /* VDSO? Maybe other junk? */)
                 continue; 
 
-            init_vma = kzalloc(sizeof(struct intial_vma), GFP_KERNEL);
+            init_vma = kzalloc(sizeof(struct initial_vma), GFP_KERNEL);
             if (!init_vma){
                 printk(KERN_EMERG "Couldnt allocate init vma\n");
                 up_write(&(this->mm->mmap_sem));
@@ -212,11 +254,20 @@ init_tracked_process(struct tracked_process * this,
     }
         
     /* Launch Thread from Here? */
-    scanner_thread = kthread_run(scanner_func, this, "pg_sched_scanner");
-    if (scanner_thread)
-        hrtimer_start(&this->scanner_thread_struct.timer, kt, HRTIMER_MODE_REL);
-    else
+    this->scanner_thread_struct.scanner_thread = kthread_run(scanner_func, this, "pg_sched_scanner");
+    if (this->scanner_thread_struct.scanner_thread){
+        //Need a better way...
+        global_timer_params.kt = &this->scanner_thread_struct.kt;
+        global_timer_params.scanner_thread = this->scanner_thread_struct.scanner_thread;
+
+        hrtimer_start(&this->scanner_thread_struct.timer,
+                      this->scanner_thread_struct.kt,
+                      HRTIMER_MODE_REL);
+    }
+    else{
         return -2;
+    }
+        
 
     
     return 0;
@@ -225,9 +276,9 @@ init_tracked_process(struct tracked_process * this,
 static int
 allocate_track_vma(struct tracked_process * this,
                    struct vm_area_struct  * vma,
-                   struct vma_desc desc   * res)
+                   struct vma_desc        * res)
 {
-    res = kzalloc(sizeof(struct vma_desc desc), GFP_KERNEL);
+    res = kzalloc(sizeof(struct vma_desc), GFP_KERNEL);
 
     res->vma           = vma;
     res->vm_start      = vma->vm_start;
@@ -236,7 +287,7 @@ allocate_track_vma(struct tracked_process * this,
     res->num_pages     = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
 	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;;
     INIT_LIST_HEAD(&res->linkage);
-    res->page_accesses = kzalloc(num_pages * sizeof(struct page_desc), GFP_KERNEL);
+    res->page_accesses = kzalloc(res->num_pages * sizeof(struct page_desc), GFP_KERNEL);
 
     if (IS_ERR(res->page_accesses)){
 	printk(KERN_EMERG "Error Allocating page access vector\n");
@@ -259,7 +310,7 @@ get_vma_desc_add_if_absent(struct tracked_process * this,
     struct vma_desc * p;
     int stale = 0;
 
-    list_for_each(p, &this->vma_desc_list, linkage){
+    list_for_each_entry(p, &this->vma_desc_list, linkage){
         if (vma == p->vma){
             if (vma->vm_start != p->vm_start ||
 		vma->vm_end != p->vm_end){
@@ -300,10 +351,10 @@ allocate_tracker_and_add_to_list(pid_t pid)
         return -1;
     }
     
-    status = init_tracked_process(tracked_pid, pid);
+    status = init_tracked_process(tracked_pid, pid, 1, 0);
     if (status){
         printk(KERN_ALERT "struct track process init failed\n");
-        if (status == - 2) kfref_put(&tracked_pid->refcount);
+        if (status == - 2) kref_put(&tracked_pid->refcount, tracked_pid->release);
         return status;
     }
     
@@ -319,42 +370,43 @@ remove_tracker_from_list(pid_t pid)
     struct tracked_process * obj;
 
     obj = NULL;
-    target = NULL;
     
-    list_for_each(pos, &pg_sched_tracked_pids){
-        obj = list_entry(pos, struct tracked_process, linkage);
+    list_for_each_entry(obj, &pg_sched_tracked_pids, linkage){
         if (obj->pid == pid){
             target = pos;
             break;
         }
     }
 
-    WARN_ON(obj == NULL || target == NULL);
+    WARN_ON(obj == NULL);
     
-    if (target != NULL) list_del(target); /* Remove from List */
-    if (obj != NULL) kref_put(&obj->refcount, obj->release); //should call d'tor, unless the other thread still has a ref
+    if (obj != NULL){
+        list_del(&obj->linkage); /* Remove from List */
+        stop_scanner_thread(obj);
+        kref_put(&obj->refcount, obj->release);
+    } 
 }
 
 /* seq_file stuff */
-int
+static int
 print_page_access_data(struct seq_file * m)
 {
-    int i;
-    int j;
+    /* int i; */
+    /* int j; */
 
-    seq_puts(m, "vma,pfn,accesses,last_touch,node\n");
-    for (i = 0; i < new_vmas_size; ++i){
-	for (j = 0; j < new_vmas[i].num_pages; ++j){
-	    if (seq_has_overflowed(m)){
-		return 1;
-	    } else {
-		seq_printf(m, "%d,%d,%d,%d,%d\n", i, j,
-			   new_vmas[i].page_accesses[j].accesses,
-			   new_vmas[i].page_accesses[j].last_touched,
-			   new_vmas[i].page_accesses[j].node);
-	    }
-	}
-    }
+    /* seq_puts(m, "vma,pfn,accesses,last_touch,node\n"); */
+    /* for (i = 0; i < new_vmas_size; ++i){ */
+    /*     for (j = 0; j < new_vmas[i].num_pages; ++j){ */
+    /*         if (seq_has_overflowed(m)){ */
+    /*     	return 1; */
+    /*         } else { */
+    /*     	seq_printf(m, "%d,%d,%d,%d,%d\n", i, j, */
+    /*     		   new_vmas[i].page_accesses[j].accesses, */
+    /*     		   new_vmas[i].page_accesses[j].last_touched, */
+    /*     		   new_vmas[i].page_accesses[j].node); */
+    /*         } */
+    /*     } */
+    /* } */
     return 0;
 }
 
@@ -464,13 +516,6 @@ pg_sched_ioctl(struct file * filp,
             }
             printk(KERN_INFO "untracking pid: %d\n", my_arg.pid);
             remove_tracker_from_list(my_arg.pid);
-
-            status = stop_scanner_thread();
-            if (status){
-                printk("ERROR: Couldn't stop scanner thread\n");
-                break;
-            }
-
         }
         status = 0;
         break;

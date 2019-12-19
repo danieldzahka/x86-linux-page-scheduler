@@ -1,13 +1,10 @@
 #ifndef __PG_SCHED_MEM_H__
 #define __PG_SCHED_MEM_H__
 #include <linux/migrate.h>
-#include <linux/seq_file.h>
 
 /* int pg_sched_scan_pgtbl(struct mm_struct *mm); */
 /* void count_vmas(struct mm_struct * mm); */
 /* void register_init_vmas(struct mm_struct * mm); */
-
-int scanner_func(void * args);
 
 typedef int (*fake_isolate_lru_page)(struct page *page);
 typedef int (*fake_vma_is_stack_for_current)(struct vm_area_struct *vma);

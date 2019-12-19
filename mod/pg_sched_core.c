@@ -43,6 +43,14 @@ struct tracked_process {
     struct kref refcount;
     struct list_head linkage; /* List: (static global) pg_sched_tracked_pids */
     struct list_head vma_desc_list; /* VMA's that we are watching */
+    int vma_desc_list_length; /* For debugging merged or disappearing vma's */
+
+    struct {
+        ktime_t kt;
+        struct hrtimer timer;
+        struct task_struct* scanner_thread;
+    } scanner_thread_struct;
+    
     void (*release) (struct kref * refc);
 };
 
@@ -67,9 +75,22 @@ free_vma_desc_list(struct list_head * list)
 static void
 tracked_process_destructor(struct tracked_process * this)
 {
+    int status;
+    status = 0;
+
     printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
-    //recursively free any nested objects
-    free_vma_desc_list();
+
+    /*Cancel Timer if active*/
+    if (hrtimer_active(&this->scanner_thread_struct.timer))
+        hrtimer_cancel(&this->scanner_thread_struct.timer);
+
+    /*Cancel Thread*/
+    if (this->scanner_thread_struct.scanner_thread)
+        status = kthread_stop(this->scanner_thread_struct.scanner_thread);
+
+    if (status) printk(KERN_EMERG "ERROR: Could not kill kthread\n");
+    
+    free_vma_desc_list(&this->vma_desc_list);
     mmdrop(this->mm);// -1 for release
     kfree(this);
 }
@@ -85,7 +106,9 @@ tracked_process_release(struct kref * refc)
 
 static int
 init_tracked_process(struct tracked_process * this,
-                     pid_t pid)
+                     pid_t pid,
+                     unsigned long log_sec,
+                     unsigned long log_nsec)
 {
     struct pid* p;
     struct task_struct * tsk;
@@ -93,8 +116,8 @@ init_tracked_process(struct tracked_process * this,
     this->pid = pid;
     this->migration_enabled = 0;
     this->policy.scans_to_be_idle = 10;
-    this->policy.period.sec  = 1;
-    this->policy.period.nsec = 0;
+    this->policy.period.sec  = log_sec;
+    this->policy.period.nsec = log_nsec;
     this->release = tracked_process_release;
 
     p = find_get_pid(pid); /* +1 temp*/
@@ -106,6 +129,7 @@ init_tracked_process(struct tracked_process * this,
     tsk = pid_task(p, PIDTYPE_PID); /* Does not elevate the refcount */
     if (!tsk){
         printk(KERN_ALERT "Error: task struct not found!!");
+        put_pid(p); /* -1 temp */
         return -1;
     }
     
@@ -117,7 +141,19 @@ init_tracked_process(struct tracked_process * this,
     kref_init(&this->refcount); /* +1 for global linked list */
     INIT_LIST_HEAD(&this->linkage);
     INIT_LIST_HEAD(&this->vma_desc_list);
+    this->vma_desc_list_length = 0;
 
+    /* Launch Thread from Here? */
+    this->scanner_thread_struct.kt = ktime_set(log_sec, log_nsec);
+    hrtimer_init(&this->scanner_thread_struct.timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    this->scanner_thread_struct.timer.function = expiration_func;
+    scanner_thread = kthread_run(scanner_func, this, "pg_sched_scanner");
+    if (scanner_thread)
+        hrtimer_start(&this->scanner_thread_struct.timer, kt, HRTIMER_MODE_REL);
+    else
+        return -2;
+
+    
     return 0;
 }
 
@@ -136,6 +172,7 @@ allocate_tracker_and_add_to_list(pid_t pid)
     status = init_tracked_process(tracked_pid, pid);
     if (status){
         printk(KERN_ALERT "struct track process init failed\n");
+        if (status == - 2) kfref_put(&tracked_pid->refcount);
         return status;
     }
     
@@ -164,7 +201,7 @@ remove_tracker_from_list(pid_t pid)
     WARN_ON(obj == NULL || target == NULL);
     
     if (target != NULL) list_del(target); /* Remove from List */
-    if (obj != NULL) kref_put(&obj->refcount, obj->release); //should probably call d'tor
+    if (obj != NULL) kref_put(&obj->refcount, obj->release); //should call d'tor, unless the other thread still has a ref
 }
 
 /* seq_file stuff */
@@ -274,6 +311,13 @@ pg_sched_ioctl(struct file * filp,
             }
             printk(KERN_INFO "untracking pid: %d\n", my_arg.pid);
             remove_tracker_from_list(my_arg.pid);
+
+            status = stop_scanner_thread();
+            if (status){
+                printk("ERROR: Couldn't stop scanner thread\n");
+                break;
+            }
+
         }
         status = 0;
         break;

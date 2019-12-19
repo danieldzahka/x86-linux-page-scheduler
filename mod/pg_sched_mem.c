@@ -15,34 +15,35 @@
 
 #include <pg_sched_mem.h>
 
-#define MAX_INIT_VMAS 20
-#define MAX_NEW_VMAS 20
+/* #define MAX_INIT_VMAS 20 */
+/* #define MAX_NEW_VMAS 20 */
 
 /* static int num_vmas; /\* May purposely become stale *\/ */
 
-static int init_vmas_size;
-static struct vm_area_struct * init_vmas[MAX_INIT_VMAS];
+/* static int init_vmas_size; */
+/* static struct vm_area_struct * init_vmas[MAX_INIT_VMAS]; */
 
-static ktime_t kt;
-static struct hrtimer timer;
-static struct task_struct* scanner_thread = NULL;
+/* static ktime_t kt; */
+/* static struct hrtimer timer; */
+/* static struct task_struct* scanner_thread; */
 
-static struct mm_struct* my_mm;
+/* static struct mm_struct* my_mm; */
 
 
 /* For Additional Anon VMAs */
-static int new_vmas_size = 0;
-static struct vma_desc new_vmas[MAX_NEW_VMAS];
+/* static int new_vmas_size = 0; */
+/* static struct vma_desc new_vmas[MAX_NEW_VMAS]; */
 
-void
-free_page_access_arrays(void)
-{
-    int i;
+//obsolete
+/* void */
+/* free_page_access_arrays(void) */
+/* { */
+/*     int i; */
 
-    for (i = 0; i < new_vmas_size; ++i){
-	kfree(new_vmas[i].page_accesses);
-    }
-}
+/*     for (i = 0; i < new_vmas_size; ++i){ */
+/* 	kfree(new_vmas[i].page_accesses); */
+/*     } */
+/* } */
 
 /*Make sure we dont free the data before this*/
 int
@@ -67,6 +68,8 @@ print_page_access_data(struct seq_file * m)
     return 0;
 }
 
+
+//This becomes adding to linked list
 static int
 track_vma(struct vm_area_struct * vma, int idx)
 {
@@ -94,6 +97,10 @@ track_vma(struct vm_area_struct * vma, int idx)
     return 0;
 }
 
+//brainblast -> give the scanner a ref to the pid_tracker_data
+//This becomes just getting a pointer from the linked list?
+//The merging should be taken care of, but idk if the excess memory gets freed
+//idea compare the length of the list to actual vmas we count, if less then we need to free
 /* Return the idx of the region, store if not there */
 /* Worry about merging VMA's later... */
 static int
@@ -127,26 +134,31 @@ get_vma_desc(struct vm_area_struct * vma)
     return &(new_vmas[i]);
 }
 
-int
-stop_scanner_thread(void)
-{
-    int status;
-    hrtimer_cancel(&timer);
-    status = kthread_stop(scanner_thread);
-    if(status){
-    	printk(KERN_ALERT "could not kill thread with return value:%d\n", status);
-	return status;
-    }
+/* int */
+/* stop_scanner_thread(void) */
+/* { */
+/*     int status; */
+/*     hrtimer_cancel(&timer); */
+/*     status = kthread_stop(scanner_thread); */
+/*     if(status){ */
+/*     	printk(KERN_ALERT "could not kill thread with return value:%d\n", status); */
+/* 	return status; */
+/*     } */
 
-    return 0;
-}
+/*     return 0; */
+/* } */
 
 /*Do something, sleep. Rinse and repeat */
-static int
+int
 scanner_func(void * args)
 {
+    struct tracked_process * tracked_proc_struct;
+
+    tracked_proc_struct = (struct tracked_process *) args;
+    
     while(1){
-	count_vmas(my_mm);
+	/* count_vmas(my_mm); */
+        printk(KERN_INFO "Hello\n");
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule();
 	if(kthread_should_stop()){
@@ -165,22 +177,22 @@ static enum hrtimer_restart expiration_func(struct hrtimer * tim){
     return HRTIMER_RESTART;
 }
 
-int
-launch_scanner_kthread(struct mm_struct * mm,
-		       unsigned long log_sec,
-		       unsigned long log_nsec)
-{
-    my_mm = mm;
-    scanner_thread = kthread_run(scanner_func, NULL, "pg_sched_scanner");
-    if (scanner_thread){
-	kt = ktime_set(log_sec, log_nsec);
-	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	timer.function = expiration_func;
-	hrtimer_start(&timer, kt, HRTIMER_MODE_REL);
-	return 0;
-    }
-    return -1;
-}
+/* int */
+/* launch_scanner_kthread(struct mm_struct * mm, */
+/* 		       unsigned long log_sec, */
+/* 		       unsigned long log_nsec) */
+/* { */
+/*     my_mm = mm; */
+/*     scanner_thread = kthread_run(scanner_func, NULL, "pg_sched_scanner"); */
+/*     if (scanner_thread){ */
+/* 	kt = ktime_set(log_sec, log_nsec); */
+/* 	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL); */
+/* 	timer.function = expiration_func; */
+/* 	hrtimer_start(&timer, kt, HRTIMER_MODE_REL); */
+/* 	return 0; */
+/*     } */
+/*     return -1; */
+/* } */
 
 /*This has a side effect in that it uses static var init_vmas_xxx */
 void

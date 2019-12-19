@@ -4,13 +4,14 @@
 #include <linux/seq_file.h>
 
 /* int pg_sched_scan_pgtbl(struct mm_struct *mm); */
-void count_vmas(struct mm_struct * mm);
-void register_init_vmas(struct mm_struct * mm);
+/* void count_vmas(struct mm_struct * mm); */
+/* void register_init_vmas(struct mm_struct * mm); */
 
-int launch_scanner_kthread(struct mm_struct * mm,
-		       unsigned long log_sec,
-		       unsigned long log_nsec);
+/* int launch_scanner_kthread(struct mm_struct * mm, */
+/* 		       unsigned long log_sec, */
+/* 		       unsigned long log_nsec); */
 
+int scanner_func(void * args);
 int stop_scanner_thread(void);
 int print_page_access_data(struct seq_file * m);
 void free_page_access_arrays(void);

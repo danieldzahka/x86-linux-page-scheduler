@@ -27,6 +27,11 @@ module_param(log_nsec, ulong, 0);
 
 static LIST_HEAD(pg_sched_tracked_pids);
 
+struct intial_vma {
+    struct vma_area_struct * vma;
+    struct list_head linkage;
+}
+
 struct page_desc {
     int accesses;
     int last_touched;
@@ -58,9 +63,12 @@ struct tracked_process {
 
     struct kref refcount;
     struct list_head linkage; /* List: (static global) pg_sched_tracked_pids */
+
     struct list_head vma_desc_list; /* VMA's that we are watching */
     int vma_desc_list_length; /* For debugging merged or disappearing vma's */
 
+    struct list_head inital_vma_list; /*.so's and other stuff I dont want to touch*/
+    
     struct {
         ktime_t kt;
         struct hrtimer timer;
@@ -69,6 +77,150 @@ struct tracked_process {
     
     void (*release) (struct kref * refc);
 };
+
+static void
+free_vma_desc(struct vma_desc * desc)
+{
+    kfree(desc->page_accesses);
+    kfree(desc);
+}
+
+static void
+free_vma_desc_list(struct list_head * list)
+{
+    struct vma_desc * desc;
+    
+    while (!list_empty(list)){
+        desc = list_first_entry(list, struct vma_desc, linkage);
+        list_del(&desc->linkage);
+        free_vma_desc(desc);
+    }    
+}
+
+static void
+free_inital_vma_list(struct list_head * list)
+{
+    struct initial_vma * p;
+    
+    while (!list_empty(list)){
+        p = list_first_entry(list, struct initial_vma, linkage);
+        list_del(&p->linkage);
+        kfree(p);
+    }    
+}
+
+static void
+tracked_process_destructor(struct tracked_process * this)
+{
+    int status;
+    status = 0;
+
+    printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
+
+    /*Cancel Timer if active*/
+    if (hrtimer_active(&this->scanner_thread_struct.timer))
+        hrtimer_cancel(&this->scanner_thread_struct.timer);
+
+    /*Cancel Thread*/
+    if (this->scanner_thread_struct.scanner_thread)
+        status = kthread_stop(this->scanner_thread_struct.scanner_thread);
+
+    if (status) printk(KERN_EMERG "ERROR: Could not kill kthread\n");
+    
+    free_vma_desc_list(&this->vma_desc_list);
+    free_inital_vma_list(&this->initial_vma_list);
+    mmdrop(this->mm);// -1 for release
+    kfree(this);
+}
+
+static void
+tracked_process_release(struct kref * refc)
+{
+    struct tracked_process * this;
+
+    this = container_of(refc, struct tracked_process, refcount);
+    tracked_process_destructor(this);
+}
+
+static int
+init_tracked_process(struct tracked_process * this,
+                     pid_t pid,
+                     unsigned long log_sec,
+                     unsigned long log_nsec)
+{
+    struct pid* p;
+    struct task_struct * tsk;
+    
+    this->pid = pid;
+    this->migration_enabled = 0;
+    this->policy.scans_to_be_idle = 10;
+    this->policy.period.sec  = log_sec;
+    this->policy.period.nsec = log_nsec;
+    this->release = tracked_process_release;
+
+    /*HR Timer config*/
+    this->scanner_thread_struct.kt = ktime_set(log_sec, log_nsec);
+    hrtimer_init(&this->scanner_thread_struct.timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    this->scanner_thread_struct.timer.function = expiration_func;
+
+    
+    p = find_get_pid(pid); /* +1 temp*/
+    if (!p){
+        printk(KERN_ALERT "Error: pid struct not found!!");
+        return -1;
+    }
+
+    tsk = pid_task(p, PIDTYPE_PID); /* Does not elevate the refcount */
+    if (!tsk){
+        printk(KERN_ALERT "Error: task struct not found!!");
+        put_pid(p); /* -1 temp */
+        return -1;
+    }
+    
+    this->mm = tsk->mm;
+    mmgrab(this->mm); // +1 for ref
+
+    put_pid(p); /* -1 temp */
+    
+    kref_init(&this->refcount); /* +1 for global linked list */
+    INIT_LIST_HEAD(&this->linkage);
+    INIT_LIST_HEAD(&this->vma_desc_list);
+    this->vma_desc_list_length = 0;
+
+    INIT_LIST_HEAD(&this->initial_vma_list);
+    {
+        struct vm_area_struct *vma;
+        struct intial_vma * init_vma;
+
+        down_write(&(this->mm->mmap_sem));
+        for (vma = this->mm->mmap; vma != NULL; vma = vma->vm_next){
+            if (!vma_is_anonymous(vma) /*Only interested in Anon*/ ||
+                my_vma_is_stack_for_current(vma) /*Don't count the stack*/ ||
+                (vma->vm_flags & VM_EXEC) ||
+                (vma->vm_flags & VM_SPECIAL) /* VDSO? Maybe other junk? */)
+                continue; 
+
+            init_vma = kzalloc(sizeof(struct intial_vma), GFP_KERNEL);
+            if (!init_vma){
+                printk(KERN_EMERG "Couldnt allocate init vma\n");
+                up_write(&(this->mm->mmap_sem));
+                return -2;
+            }
+            list_add(&init_vma->linkage, &this->initial_vma_list);
+        }
+        up_write(&(this->mm->mmap_sem));
+    }
+        
+    /* Launch Thread from Here? */
+    scanner_thread = kthread_run(scanner_func, this, "pg_sched_scanner");
+    if (scanner_thread)
+        hrtimer_start(&this->scanner_thread_struct.timer, kt, HRTIMER_MODE_REL);
+    else
+        return -2;
+
+    
+    return 0;
+}
 
 static int
 allocate_track_vma(struct tracked_process * this,
@@ -132,117 +284,6 @@ get_vma_desc_add_if_absent(struct tracked_process * this,
         printk(KERN_EMERG "COULD NOT ALLOCATE VMA DESC\n");
         return status;
     }
-    
-    return 0;
-}
-
-static struct vma_desc *
-get_vma_desc(struct tracked_process * this, struct vm_area_struct * vma)
-{
-    int i;
-    i = index_of_vma(vma);
-    return &(new_vmas[i]);
-}
-
-static void
-free_vma_desc(struct vma_desc * desc)
-{
-    kfree(desc->page_accesses);
-    kfree(desc);
-}
-
-static void
-free_vma_desc_list(struct list_head * list)
-{
-    struct vma_desc * desc;
-    
-    while (!list_empty(list)){
-        desc = list_first_entry(list, struct vma_desc, linkage);
-        free_vma_desc(desc);
-    }    
-}
-
-static void
-tracked_process_destructor(struct tracked_process * this)
-{
-    int status;
-    status = 0;
-
-    printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
-
-    /*Cancel Timer if active*/
-    if (hrtimer_active(&this->scanner_thread_struct.timer))
-        hrtimer_cancel(&this->scanner_thread_struct.timer);
-
-    /*Cancel Thread*/
-    if (this->scanner_thread_struct.scanner_thread)
-        status = kthread_stop(this->scanner_thread_struct.scanner_thread);
-
-    if (status) printk(KERN_EMERG "ERROR: Could not kill kthread\n");
-    
-    free_vma_desc_list(&this->vma_desc_list);
-    mmdrop(this->mm);// -1 for release
-    kfree(this);
-}
-
-static void
-tracked_process_release(struct kref * refc)
-{
-    struct tracked_process * this;
-
-    this = container_of(refc, struct tracked_process, refcount);
-    tracked_process_destructor(this);
-}
-
-static int
-init_tracked_process(struct tracked_process * this,
-                     pid_t pid,
-                     unsigned long log_sec,
-                     unsigned long log_nsec)
-{
-    struct pid* p;
-    struct task_struct * tsk;
-    
-    this->pid = pid;
-    this->migration_enabled = 0;
-    this->policy.scans_to_be_idle = 10;
-    this->policy.period.sec  = log_sec;
-    this->policy.period.nsec = log_nsec;
-    this->release = tracked_process_release;
-
-    p = find_get_pid(pid); /* +1 temp*/
-    if (!p){
-        printk(KERN_ALERT "Error: pid struct not found!!");
-        return -1;
-    }
-
-    tsk = pid_task(p, PIDTYPE_PID); /* Does not elevate the refcount */
-    if (!tsk){
-        printk(KERN_ALERT "Error: task struct not found!!");
-        put_pid(p); /* -1 temp */
-        return -1;
-    }
-    
-    this->mm = tsk->mm;
-    mmgrab(this->mm); // +1 for ref
-
-    put_pid(p); /* -1 temp */
-    
-    kref_init(&this->refcount); /* +1 for global linked list */
-    INIT_LIST_HEAD(&this->linkage);
-    INIT_LIST_HEAD(&this->vma_desc_list);
-    this->vma_desc_list_length = 0;
-
-    /* Launch Thread from Here? */
-    this->scanner_thread_struct.kt = ktime_set(log_sec, log_nsec);
-    hrtimer_init(&this->scanner_thread_struct.timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-    this->scanner_thread_struct.timer.function = expiration_func;
-    scanner_thread = kthread_run(scanner_func, this, "pg_sched_scanner");
-    if (scanner_thread)
-        hrtimer_start(&this->scanner_thread_struct.timer, kt, HRTIMER_MODE_REL);
-    else
-        return -2;
-
     
     return 0;
 }

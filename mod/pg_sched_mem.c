@@ -46,70 +46,6 @@
 /* } */
 
 
-//This becomes adding to linked list
-static int
-track_vma(struct vm_area_struct * vma, int idx)
-{
-    struct vma_desc desc =
-	{
-	    .vma           = vma,
-	    .vm_start      = vma->vm_start,
-	    .vm_end        = vma->vm_end,
-	    .page_accesses = NULL,
-	    .num_pages     = 0,
-	};
-    int num_pages = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
-	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;
-    desc.num_pages = num_pages;
-    
-    desc.page_accesses = kzalloc(num_pages * sizeof(struct page_desc), GFP_KERNEL);
-    if (IS_ERR(desc.page_accesses)){
-	printk(KERN_EMERG "Error Allocating page access vector\n");
-	return -1;
-    }
-
-    WARN_ON(idx >= MAX_NEW_VMAS);
-
-    new_vmas[idx] = desc;
-    return 0;
-}
-
-//brainblast -> give the scanner a ref to the pid_tracker_data
-//This becomes just getting a pointer from the linked list?
-//The merging should be taken care of, but idk if the excess memory gets freed
-//idea compare the length of the list to actual vmas we count, if less then we need to free
-/* Return the idx of the region, store if not there */
-/* Worry about merging VMA's later... */
-static int
-index_of_vma(struct vm_area_struct * vma)
-{
-    int i, status;
-    for (i = 0; i < new_vmas_size; ++i){
-	//make sure that the bounds are still valid...
-	if (vma == new_vmas[i].vma){
-	    if (vma->vm_start != new_vmas[i].vm_start ||
-		vma->vm_end != new_vmas[i].vm_end){
-		//resize
-		kfree(new_vmas[i].page_accesses);
-		track_vma(vma, i);
-	    }
-	    return i;
-	}
-    }        
-    //not found
-    status = track_vma(vma, new_vmas_size);
-    if (status) printk(KERN_EMERG "Error Tracking VMA\n");
-    new_vmas_size++;
-    return new_vmas_size - 1;
-}
-
-static struct vma_desc *
-get_vma_desc(struct vm_area_struct * vma)
-{
-    int i;
-    i = index_of_vma(vma);
-    return &(new_vmas[i]);
-}
 
 /* int */
 /* stop_scanner_thread(void) */
@@ -147,10 +83,14 @@ scanner_func(void * args)
 }
 
 /* timer function */
-static enum hrtimer_restart expiration_func(struct hrtimer * tim){
+static enum hrtimer_restart
+expiration_func(struct hrtimer * tim,
+                ktime_t * kt,
+                struct task_struct* scanner_thread)
+{
     wake_up_process(scanner_thread);
-    hrtimer_forward_now(tim, kt);
-    /* printk(KERN_ALERT "timer expired\n"); */
+    hrtimer_forward_now(tim, *kt);
+
     return HRTIMER_RESTART;
 }
 

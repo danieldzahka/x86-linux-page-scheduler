@@ -27,6 +27,22 @@ module_param(log_nsec, ulong, 0);
 
 static LIST_HEAD(pg_sched_tracked_pids);
 
+struct page_desc {
+    int accesses;
+    int last_touched;
+    int node;
+};
+
+struct vma_desc {
+    struct vm_area_struct * vma; /*Use as key*/
+    unsigned long           vm_start;
+    unsigned long           vm_end;
+    struct page_desc *      page_accesses;
+    int                     num_pages;
+
+    struct list_head linkage; /* struct tracked_process -> vma_list */
+};
+
 struct tracked_process {
     pid_t pid;
     int migration_enabled;
@@ -53,6 +69,80 @@ struct tracked_process {
     
     void (*release) (struct kref * refc);
 };
+
+static int
+allocate_track_vma(struct tracked_process * this,
+                   struct vm_area_struct  * vma,
+                   struct vma_desc desc   * res)
+{
+    res = kzalloc(sizeof(struct vma_desc desc), GFP_KERNEL);
+
+    res->vma           = vma;
+    res->vm_start      = vma->vm_start;
+    res->vm_end        = vma->vm_end;
+    res->page_accesses = NULL;
+    res->num_pages     = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
+	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;;
+    INIT_LIST_HEAD(&res->linkage);
+    res->page_accesses = kzalloc(num_pages * sizeof(struct page_desc), GFP_KERNEL);
+
+    if (IS_ERR(res->page_accesses)){
+	printk(KERN_EMERG "Error Allocating page access vector\n");
+	return -1;
+    }
+
+    list_add(&res->linkage, &this->vma_desc_list);
+    this->vma_desc_list_length++;
+    
+    return 0;
+}
+
+/*This also handles merged or resized vmas*/
+static int
+get_vma_desc_add_if_absent(struct tracked_process * this,
+                           struct vm_area_struct * vma,
+                           struct vma_desc * res)
+{
+    int status;
+    struct vma_desc * p;
+    int stale = 0;
+
+    list_for_each(p, &this->vma_desc_list, linkage){
+        if (vma == p->vma){
+            if (vma->vm_start != p->vm_start ||
+		vma->vm_end != p->vm_end){
+                stale = 1;
+                break;
+	    } else {
+                res = p;
+                return 0;
+            }
+        }
+    }
+
+    if (stale){
+        list_del(&p->linkage);
+        this->vma_desc_list_length--;
+        WARN_ON(this->vma_desc_list_length < 0);
+        free_vma_desc(p);
+    }
+
+    status = allocate_track_vma(this, vma, res);
+    if (status){
+        printk(KERN_EMERG "COULD NOT ALLOCATE VMA DESC\n");
+        return status;
+    }
+    
+    return 0;
+}
+
+static struct vma_desc *
+get_vma_desc(struct tracked_process * this, struct vm_area_struct * vma)
+{
+    int i;
+    i = index_of_vma(vma);
+    return &(new_vmas[i]);
+}
 
 static void
 free_vma_desc(struct vma_desc * desc)
@@ -205,6 +295,28 @@ remove_tracker_from_list(pid_t pid)
 }
 
 /* seq_file stuff */
+int
+print_page_access_data(struct seq_file * m)
+{
+    int i;
+    int j;
+
+    seq_puts(m, "vma,pfn,accesses,last_touch,node\n");
+    for (i = 0; i < new_vmas_size; ++i){
+	for (j = 0; j < new_vmas[i].num_pages; ++j){
+	    if (seq_has_overflowed(m)){
+		return 1;
+	    } else {
+		seq_printf(m, "%d,%d,%d,%d,%d\n", i, j,
+			   new_vmas[i].page_accesses[j].accesses,
+			   new_vmas[i].page_accesses[j].last_touched,
+			   new_vmas[i].page_accesses[j].node);
+	    }
+	}
+    }
+    return 0;
+}
+
 static int
 pg_sched_data_show(struct seq_file *m,
 		   void *v)

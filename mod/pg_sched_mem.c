@@ -45,29 +45,6 @@
 /*     } */
 /* } */
 
-/*Make sure we dont free the data before this*/
-int
-print_page_access_data(struct seq_file * m)
-{
-    int i;
-    int j;
-
-    seq_puts(m, "vma,pfn,accesses,last_touch,node\n");
-    for (i = 0; i < new_vmas_size; ++i){
-	for (j = 0; j < new_vmas[i].num_pages; ++j){
-	    if (seq_has_overflowed(m)){
-		return 1;
-	    } else {
-		seq_printf(m, "%d,%d,%d,%d,%d\n", i, j,
-			   new_vmas[i].page_accesses[j].accesses,
-			   new_vmas[i].page_accesses[j].last_touched,
-			   new_vmas[i].page_accesses[j].node);
-	    }
-	}
-    }
-    return 0;
-}
-
 
 //This becomes adding to linked list
 static int

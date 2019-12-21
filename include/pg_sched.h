@@ -27,6 +27,7 @@
 /* BOTH USER AND KERNEL */
 #define PG_SCHED_MODULE_NAME "pg_sched"
 #define PG_SCHED_DEVICE_PATH "/dev/" PG_SCHED_MODULE_NAME
+#define PG_SCHED_TMP_DIR      "/tmp/" PG_SCHED_MODULE_NAME "/"
 
 /* IOCTL ARGS*/
 struct track_pid_arg {

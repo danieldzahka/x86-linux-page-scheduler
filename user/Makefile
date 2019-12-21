@@ -5,7 +5,7 @@ TARGS=bin/launcher
 .PHONY:all
 all: $(TARGS)
 
-bin/launcher: launcher.o hashtable.o | bin
+bin/launcher: launcher.o hashtable.o memory_map.o | bin
 	$(CC) -o $@ $^ $(CFLAGS)
 bin:
 	mkdir bin

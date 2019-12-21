@@ -22,11 +22,6 @@
 int pg_sched_debug = 0;
 module_param(pg_sched_debug, int, 0644);
 
-/* static unsigned long log_sec = 1; */
-/* static unsigned long log_nsec = 0;  */
-/* module_param(log_sec, ulong, 0); */
-/* module_param(log_nsec, ulong, 0); */
-
 static LIST_HEAD(pg_sched_tracked_pids);
 
 static struct {
@@ -36,6 +31,7 @@ static struct {
 
 /* timer function */
 /* Wow, I can't pass non static data to this... f&*# */
+//USE CONTAINER OF MACRO TO GET AROUND THIS...
 enum hrtimer_restart
 expiration_func(struct hrtimer * tim)
 {
@@ -44,57 +40,6 @@ expiration_func(struct hrtimer * tim)
 
     return HRTIMER_RESTART;
 }
-
-/* struct initial_vma { */
-/*     struct vma_area_struct * vma; */
-/*     struct list_head linkage; */
-/* }; */
-
-/* struct page_desc { */
-/*     int accesses; */
-/*     int last_touched; */
-/*     int node; */
-/* }; */
-
-/* struct vma_desc { */
-/*     struct vm_area_struct * vma; /\*Use as key*\/ */
-/*     unsigned long           vm_start; */
-/*     unsigned long           vm_end; */
-/*     struct page_desc *      page_accesses; */
-/*     int                     num_pages; */
-
-/*     struct list_head linkage; /\* struct tracked_process -> vma_list *\/ */
-/* }; */
-
-/* struct tracked_process { */
-/*     pid_t pid; */
-/*     int migration_enabled; */
-/*     struct { */
-/*         int scans_to_be_idle; */
-/*         struct { */
-/*             unsigned long sec; */
-/*             unsigned long nsec; */
-/*         } period; */
-/*     } policy; */
-
-/*     struct mm_struct * mm; */
-
-/*     struct kref refcount; */
-/*     struct list_head linkage; /\* List: (static global) pg_sched_tracked_pids *\/ */
-
-/*     struct list_head vma_desc_list; /\* VMA's that we are watching *\/ */
-/*     int vma_desc_list_length; /\* For debugging merged or disappearing vma's *\/ */
-
-/*     struct list_head initial_vma_list; /\*.so's and other stuff I dont want to touch*\/ */
-    
-/*     struct { */
-/*         ktime_t kt; */
-/*         struct hrtimer timer; */
-/*         struct task_struct* scanner_thread; */
-/*     } scanner_thread_struct; */
-    
-/*     void (*release) (struct kref * refc); */
-/* }; */
 
 static void
 free_vma_desc(struct vma_desc * desc)
@@ -136,7 +81,7 @@ scanner_func(void * args)
     tracked_proc_struct = (struct tracked_process *) args;
     
     while(1){
-	/* count_vmas(my_mm); */
+	count_vmas(tracked_proc_struct);
         printk(KERN_INFO "Hello\n");
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule();
@@ -267,8 +212,6 @@ init_tracked_process(struct tracked_process * this,
     else{
         return -2;
     }
-        
-
     
     return 0;
 }
@@ -427,43 +370,15 @@ static int
 pg_sched_open(struct inode * inodep,
 	      struct file  * filp)
 {
-    int status;
-
     if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device opened\n");
-
-    /*To Do: Grab onto the mm struct and bump the refcount*/
-    /*To Do: Launch the page scheduler thread*/
-    
-    /* register_init_vmas(current->mm); */
-    /* status = launch_scanner_kthread(current->mm, log_sec, log_nsec); */
-
-    status = 0;
-    return status;
+    return 0;
 }
 
 static int
 pg_sched_release(struct inode * inodep,
 		 struct file  * filp)
 {
-    int status;
     if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device released\n");
-
-    //Though for now, the blocking means that the user mm exists
-    /*To Do: Forget the mm struct and decrement the refcount*/
-    /*To Do: Kill the page scheduler thread*/
-
-    /* status = stop_scanner_thread(); */
-    /* if (status){ */
-    /*     return -1; */
-    /* } */
-
-    //print out data
-    /* print_page_access_data(); */
-    
-    //free memory
-    /* free_page_access_arrays(); */
-
-    status = 0;
     return 0;
 }
 

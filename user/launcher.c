@@ -20,6 +20,7 @@
 
 #include <pg_sched.h>
 #include "hashtable.h"
+#include "memory_map.h"
 
 #define PG_SCHED_NULL_PID 0
 
@@ -871,6 +872,20 @@ target(struct program_data * data)
     return execve(data->exe, data->argv, data->envp);
 }
 
+static void
+dump_memory_map(pid_t target_pid)
+{
+    int status;
+    struct memory_map target_map;
+
+    status = invirt_parse_memory_map(target_pid, &target_map);
+    if (status != 0){
+	fprintf(stderr, "Couldn't parese memory map!\n");
+	return;
+    }
+
+    invirt_print_memory_map(&target_map);
+}
 
 /*
  * waitpid() will return once the tracee invokes exec
@@ -896,6 +911,9 @@ attach_to_pid_at_entry_point(struct program_data * data)
         data->exe
     );
 
+    /*Debug*/
+    dump_memory_map(data->pid);
+    
     /* Latch onto the stopped process */
     status = pg_sched_track_pid(data);
     if (status){

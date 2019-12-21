@@ -16,89 +16,6 @@
 #include <pg_sched_mem.h>
 #include <pg_sched_priv.h>
 
-
-/* #define MAX_INIT_VMAS 20 */
-/* #define MAX_NEW_VMAS 20 */
-
-/* static int num_vmas; /\* May purposely become stale *\/ */
-
-/* static int init_vmas_size; */
-/* static struct vm_area_struct * init_vmas[MAX_INIT_VMAS]; */
-
-/* static ktime_t kt; */
-/* static struct hrtimer timer; */
-/* static struct task_struct* scanner_thread; */
-
-/* static struct mm_struct* my_mm; */
-
-
-/* For Additional Anon VMAs */
-/* static int new_vmas_size = 0; */
-/* static struct vma_desc new_vmas[MAX_NEW_VMAS]; */
-
-//obsolete
-/* void */
-/* free_page_access_arrays(void) */
-/* { */
-/*     int i; */
-
-/*     for (i = 0; i < new_vmas_size; ++i){ */
-/* 	kfree(new_vmas[i].page_accesses); */
-/*     } */
-/* } */
-
-
-
-/* int */
-/* stop_scanner_thread(void) */
-/* { */
-/*     int status; */
-/*     hrtimer_cancel(&timer); */
-/*     status = kthread_stop(scanner_thread); */
-/*     if(status){ */
-/*     	printk(KERN_ALERT "could not kill thread with return value:%d\n", status); */
-/* 	return status; */
-/*     } */
-
-/*     return 0; */
-/* } */
-
-/* int */
-/* launch_scanner_kthread(struct mm_struct * mm, */
-/* 		       unsigned long log_sec, */
-/* 		       unsigned long log_nsec) */
-/* { */
-/*     my_mm = mm; */
-/*     scanner_thread = kthread_run(scanner_func, NULL, "pg_sched_scanner"); */
-/*     if (scanner_thread){ */
-/* 	kt = ktime_set(log_sec, log_nsec); */
-/* 	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL); */
-/* 	timer.function = expiration_func; */
-/* 	hrtimer_start(&timer, kt, HRTIMER_MODE_REL); */
-/* 	return 0; */
-/*     } */
-/*     return -1; */
-/* } */
-
-/*This has a side effect in that it uses static var init_vmas_xxx */
-/* void */
-/* register_init_vmas(struct mm_struct * mm) */
-/* { */
-/*     struct vm_area_struct *vma; */
-
-/*     down_write(&(mm->mmap_sem)); */
-/*     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){ */
-/* 	/\* This can never end well... *\/ */
-/* 	if (!vma_is_anonymous(vma)) continue; /\*Only interested in Anon*\/ */
-/* 	/\* if (my_vma_is_stack_for_current(vma)) continue; /\\*Don't count the stack*\\/ *\/ */
-/* 	if (vma->vm_flags & VM_EXEC) continue; */
-/* 	if (vma->vm_flags & VM_SPECIAL) continue; /\* Dynamically Loaded Code Pages *\/ */
-
-/* 	init_vmas[init_vmas_size++] = vma; */
-/*     } */
-/*     up_write(&(mm->mmap_sem)); */
-/* } */
-
 /* static int */
 /* is_new_vma(struct vm_area_struct *vma) */
 /* { */
@@ -138,7 +55,9 @@ struct page* pg_sched_alloc(struct page *page, unsigned long private)
 fake_isolate_lru_page my_isolate_lru_page = NULL;
 fake_vma_is_stack_for_current my_vma_is_stack_for_current = NULL;
 fake_migrate_pages my_migrate_pages = NULL;
+//consider looking up walk_vma here so ppl dont need to recompile the kernel
 
+//These should get added to the tracker object...
 static int current_period = 0;
 static int threshold = 10;
 static int max_pages = 1000;
@@ -244,8 +163,9 @@ hugetlb_callback(pte_t *pte,
 
 
 void
-count_vmas(struct mm_struct * mm)
+count_vmas(struct tracked_process * target_tracker)
 {
+    struct mm_struct * mm;
     struct vm_area_struct *vma;
     int status;
     LIST_HEAD(migration_list);
@@ -272,10 +192,12 @@ count_vmas(struct mm_struct * mm)
 	    .hugetlb_entry = hugetlb_callback,
 	};
 
+    mm = target_tracker->mm;
     current_period++;
     
     down_write(&(mm->mmap_sem));
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
+	printk(KERN_EMERG "VMA ADDRESS: %lx - %lx\n", vma->vm_start, vma->vm_end);
 	/* This can never end well... */
 	if (!vma_is_anonymous(vma)) continue; /*Only interested in Anon*/
 	if (my_vma_is_stack_for_current(vma)) continue; /*Don't count the stack*/
@@ -283,11 +205,11 @@ count_vmas(struct mm_struct * mm)
 	if (vma->vm_flags & VM_SPECIAL) continue; /* Dynamically Loaded Code Pages */
 	/* if (!is_new_vma(vma)) continue; */
 
-	/* printk(KERN_EMERG "VMA ADDRESS: %lx\n", vma->vm_start); */
+	printk(KERN_EMERG "HIT\n");
 	pg_walk_data.list = &migration_list;
 	pg_walk_data.vma_desc = NULL;/* get_vma_desc(vma); */
-	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
-	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
+	/* status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data); */
+	/* if (status) printk(KERN_ALERT "PAGE WALK BAD\n"); */
     }
     up_write(&(mm->mmap_sem));
 
@@ -295,12 +217,12 @@ count_vmas(struct mm_struct * mm)
     /*Figure out how to put stuff back on the LRU if we can't move it */
     /*Unless of course, migrate_pages does this already */
 
-    status = my_migrate_pages(&migration_list, pg_sched_alloc,
-    			   NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
+    /* status = my_migrate_pages(&migration_list, pg_sched_alloc, */
+    /* 			   NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED); */
 
-    if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status);
-    if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");
+    /* if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status); */
+    /* if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n"); */
     
     /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
-    printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);
+    /* printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1); */
 }

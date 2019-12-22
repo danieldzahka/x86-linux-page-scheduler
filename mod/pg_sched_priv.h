@@ -4,7 +4,7 @@
 //but putting below all includes should work nonetheless
 
 struct initial_vma {
-    struct vma_area_struct * vma;
+    struct vm_area_struct * vma;
     struct list_head linkage;
 };
 
@@ -53,5 +53,10 @@ struct tracked_process {
     
     void (*release) (struct kref * refc);
 };
+
+int
+get_vma_desc_add_if_absent(struct tracked_process * this,
+                           struct vm_area_struct * vma,
+                           struct vma_desc * res);
 
 #endif /* __PG_SCHED_PRIV_H__ */

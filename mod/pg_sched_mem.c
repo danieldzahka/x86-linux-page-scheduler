@@ -16,15 +16,20 @@
 #include <pg_sched_mem.h>
 #include <pg_sched_priv.h>
 
-/* static int */
-/* is_new_vma(struct vm_area_struct *vma) */
-/* { */
-/*     int i; */
-/*     for (i = 0; i < init_vmas_size; ++i){ */
-/* 	if (vma == init_vmas[i]) return false; */
-/*     } */
-/*     return true; */
-/* } */
+static int
+is_new_vma(struct tracked_process * target_tracker,
+	   struct vm_area_struct *vma)
+{
+    struct initial_vma * obj;
+    
+    list_for_each_entry(obj, &target_tracker->initial_vma_list, linkage){
+	if (obj->vma == vma){
+	    return false;
+	}
+    }
+
+    return true;
+}
 
 struct pg_walk_data
 {
@@ -79,6 +84,8 @@ pte_callback(pte_t *pte,
     
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
+    #if 0
+    
     /*
       1) bump refcount for page (Don't think I need to do this)
       2) isolate_lru_page
@@ -138,6 +145,8 @@ pte_callback(pte_t *pte,
     	++walk_data->list_size;
     	/* printk(KERN_INFO "Page Added To Migration List\n"); */
     }
+
+    #endif
     
     walk_data->user_pages_4KB++;
 
@@ -179,7 +188,7 @@ count_vmas(struct tracked_process * target_tracker)
 	    .user_pages_4MB    = 0,
 	    .n0                = 0,
 	    .n1                = 0,
-	    .list              = NULL,
+	    .list              = &migration_list,
 	    .list_size         = 0,
 	    .vma_desc          = NULL,
 	};
@@ -199,17 +208,24 @@ count_vmas(struct tracked_process * target_tracker)
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
 	printk(KERN_EMERG "VMA ADDRESS: %lx - %lx\n", vma->vm_start, vma->vm_end);
 	/* This can never end well... */
-	if (!vma_is_anonymous(vma)) continue; /*Only interested in Anon*/
-	if (my_vma_is_stack_for_current(vma)) continue; /*Don't count the stack*/
-	if (vma->vm_flags & VM_EXEC) continue;
-	if (vma->vm_flags & VM_SPECIAL) continue; /* Dynamically Loaded Code Pages */
-	/* if (!is_new_vma(vma)) continue; */
+	/* if (!vma_is_anonymous(vma)) continue; /\*Only interested in Anon*\/ */
+	/* if (my_vma_is_stack_for_current(vma)) continue; /\*Don't count the stack*\/ */
+	if ((vma->vm_flags & VM_EXEC)    ||
+	    (vma->vm_flags & VM_PFNMAP)  ||
+	    (vma->vm_flags & VM_SPECIAL) ||
+	    (!is_new_vma(target_tracker, vma))) continue;
 
-	printk(KERN_EMERG "HIT\n");
-	pg_walk_data.list = &migration_list;
-	pg_walk_data.vma_desc = NULL;/* get_vma_desc(vma); */
-	/* status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data); */
-	/* if (status) printk(KERN_ALERT "PAGE WALK BAD\n"); */
+	status = get_vma_desc_add_if_absent(target_tracker, vma,
+				   pg_walk_data.vma_desc);
+
+	if (status){
+	    printk(KERN_EMERG "Error: get_vma_desc_add_if_absent failed!\n");
+	    continue;
+	}
+	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
+	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
+	printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
+	pg_walk_data.user_pages_4KB = 0; //reset
     }
     up_write(&(mm->mmap_sem));
 

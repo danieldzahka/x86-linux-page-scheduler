@@ -182,17 +182,20 @@ init_tracked_process(struct tracked_process * this,
         down_write(&(this->mm->mmap_sem));
         for (vma = this->mm->mmap; vma != NULL; vma = vma->vm_next){
             if (!vma_is_anonymous(vma) /*Only interested in Anon*/ ||
-                my_vma_is_stack_for_current(vma) /*Don't count the stack*/ ||
+                /* my_vma_is_stack_for_current(vma) /\*Don't count the stack*\/ || */
                 (vma->vm_flags & VM_EXEC) ||
                 (vma->vm_flags & VM_SPECIAL) /* VDSO? Maybe other junk? */)
                 continue; 
 
+	    printk("Does anything even get here?\n");
             init_vma = kzalloc(sizeof(struct initial_vma), GFP_KERNEL);
             if (!init_vma){
                 printk(KERN_EMERG "Couldnt allocate init vma\n");
                 up_write(&(this->mm->mmap_sem));
                 return -2;
             }
+	    
+	    init_vma->vma = vma;
             list_add(&init_vma->linkage, &this->initial_vma_list);
         }
         up_write(&(this->mm->mmap_sem));
@@ -244,7 +247,7 @@ allocate_track_vma(struct tracked_process * this,
 }
 
 /*This also handles merged or resized vmas*/
-static int
+int
 get_vma_desc_add_if_absent(struct tracked_process * this,
                            struct vm_area_struct * vma,
                            struct vma_desc * res)

@@ -216,7 +216,7 @@ dump_raw_snapshot(char * filename)
 	    return -1;
 	}
 
-	printf("%lx-%lx %s", start, end, buf);
+	printf("%lx-%lx %4s %s\n", start, end, prot, buf);
     }
 
     fclose(f);

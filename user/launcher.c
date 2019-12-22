@@ -876,15 +876,12 @@ static void
 dump_memory_map(pid_t target_pid)
 {
     int status;
-    struct memory_map target_map;
 
-    status = invirt_parse_memory_map(target_pid, &target_map);
+    status = pg_sched_dump_memory_map(target_pid);
     if (status != 0){
-	fprintf(stderr, "Couldn't parese memory map!\n");
+	fprintf(stderr, "Couldn't parse memory map!\n");
 	return;
     }
-
-    invirt_print_memory_map(&target_map);
 }
 
 /*

@@ -23,6 +23,8 @@
 #include "memory_map.h"
 
 #define PG_SCHED_NULL_PID 0
+#define PG_SCHED_MAX_PROCS 100
+#define PG_SCHED_DEV_ON 0
 
 struct program_data {
     char * this_exe;
@@ -30,7 +32,9 @@ struct program_data {
     
     /* target data */
     char * exe;
-    pid_t pid;
+    pid_t pid[PG_SCHED_MAX_PROCS];
+    bool  tracker_freed[PG_SCHED_MAX_PROCS];
+    int max_proc_idx;
 
     /* target argc/argv/envp */
     int argc;
@@ -43,6 +47,9 @@ struct program_data {
     int target_outfd[2];
     int target_errfd[2];
 };
+
+static int
+pg_sched_install_handlers(struct program_data * data);
 
 typedef int (*fd_handler_fn)(int fd, void * priv_data);
 struct fd_handler {
@@ -340,11 +347,14 @@ handle_stdin(int    fd,
 }
 
 static int
-pg_sched_untrack_pid(struct program_data * data)
+pg_sched_untrack_pid(struct program_data * data,
+                     int i)
 {
+    if (data->tracker_freed[i] == true) return 0;
+    
     int status;
     struct untrack_pid_arg arg = {
-        .pid = data->pid
+        .pid = data->pid[i],
     };
 
     status = ioctl(data->dev_fd, PG_SCHED_UNTRACK_PID, &arg);
@@ -352,37 +362,41 @@ pg_sched_untrack_pid(struct program_data * data)
         puts("IOCTL ERROR\n");
         return status;
     }
-    
-    status = close(data->dev_fd);
-    if (status){
-        puts("Error closing " PG_SCHED_DEVICE_PATH "\n");
-        return status;
-    }
+
+    data->tracker_freed[i] = true;
+    /* status = close(data->dev_fd); */
+    /* if (status){ */
+    /*     puts("Error closing " PG_SCHED_DEVICE_PATH "\n"); */
+    /*     return status; */
+    /* } */
 
     return 0;
 }
 
 static int
-pg_sched_track_pid(struct program_data * data)
+pg_sched_track_pid(struct program_data * data,
+                   int i)
 {
 
     int status;
     int dev_open_flags = 0;
     struct track_pid_arg arg = {
-        .pid = data->pid
+        .pid = data->pid[i],
     };
 
-    data->dev_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags);
-    if (data->dev_fd == -1){
-        fprintf(stderr, "Couldn't open " PG_SCHED_DEVICE_PATH "\n");
-        return -1;
-    }
+    /* data->dev_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags); */
+    /* if (data->dev_fd == -1){ */
+    /*     fprintf(stderr, "Couldn't open " PG_SCHED_DEVICE_PATH "\n"); */
+    /*     return -1; */
+    /* } */
 
     status = ioctl(data->dev_fd, PG_SCHED_TRACK_PID, &arg);
     if (status == -1){
         fprintf(stderr, "IOCTL ERROR\n");
         return status;
     }
+
+    data->tracker_freed[i] = false;
     
     return 0;
 }
@@ -394,10 +408,14 @@ pg_sched_track_pid(struct program_data * data)
 static void
 teardown_target(struct program_data * data)
 {
+    int status;
 
     close(data->target_infd[1]);
     close(data->target_outfd[0]);
     close(data->target_errfd[0]);
+
+    
+
 
     forget_fd(STDIN_FILENO);
     forget_fd(data->target_outfd[0]);
@@ -408,20 +426,21 @@ teardown_target(struct program_data * data)
  * kill a running target process
  */
 static void
-kill_and_teardown_target(struct program_data * data)
+kill_and_teardown_target(struct program_data * data, int i)
 {
+    #if PG_SCHED_DEV_ON
     int status;
     
     /* Tell module to release mm struct, close dev */
-    status = pg_sched_untrack_pid(data);
+    status = pg_sched_untrack_pid(data, i);
     if (status){
         fprintf(stderr, "Error: Could not untrack target pid\n");
     }
-    
-    kill(data->pid, SIGKILL);
-    waitpid(data->pid, NULL, 0);
+    #endif
 
-    teardown_target(data);
+    kill(data->pid[i], SIGKILL);
+    waitpid(data->pid[i], NULL, 0);
+
 }
 
 /*
@@ -470,45 +489,71 @@ handle_sigchld(int    fd,
     assert(byte == 'c');
 
 
-    /* Tell module to release mm struct, close dev */
-    status = pg_sched_untrack_pid(p_data);
-    if (status){
-        fprintf(stderr, "Error: Could not untrack target pid\n");
-    }
-    
-    /* see if target is down */
-    pid = waitpid(p_data->pid, &ex_status, WNOHANG);
-    if (pid == p_data->pid) {
+    for (int i = 0; i <= p_data->max_proc_idx; ++i){
+        if (p_data->pid[i] == PG_SCHED_NULL_PID) continue;
+        /* see if target is down */
+        pid = waitpid(p_data->pid[i], &ex_status, WNOHANG);
+        if (pid == p_data->pid[i]) {
 
-        /* printf("target died\n"); */
-        fflush(stdout);
+            /* printf("target died\n"); */
+            fflush(stdout);
         
-        if (WIFEXITED(ex_status)) {
-            printf("Target exited with status %d\n", WEXITSTATUS(ex_status));
+            if (WIFEXITED(ex_status)) {
+                printf("Target: %d exited with status %d\n", p_data->pid[i], WEXITSTATUS(ex_status));
 
-            teardown_target(p_data);
-            terminate = true;
+                /*This is where that ioctl bug was... was probably double called*/    
+#if PG_SCHED_DEV_ON
+                /* Tell module to release mm struct, close dev */
+                status = pg_sched_untrack_pid(p_data, i);
+                if (status){
+                    fprintf(stderr, "Error: Could not untrack target pid\n");
+                }
+#endif
+                
+                /* teardown_target(p_data); */
+                p_data->pid[i] = PG_SCHED_NULL_PID;
+                //terminate = true; //need to make this check each targ? pull this out... check each proc in loop
+                continue;
+            }
+
+            //Check the ptrace stop case...
+            if (WIFSTOPPED(ex_status)){
+                /* printf("pid: %d stopped in sigchld handler\n", pid); */
+                if (ex_status>>8 == (SIGTRAP | (PTRACE_EVENT_FORK<<8))){
+                    /* puts("detected fork, retrieving pid"); */
+                    unsigned long child;
+                    if (ptrace(PTRACE_GETEVENTMSG, p_data->pid[i], NULL, &child) ==  -1){
+                        fprintf(stderr, "No child pid?\n");
+                    } else {
+                        pid_t p = (pid_t) child;
+                        p_data->pid[++p_data->max_proc_idx] = p;
+#if PG_SCHED_DEV_ON
+                        status = pg_sched_track_pid(p_data, p_data->max_proc_idx);
+                        if (status){
+                            fprintf(stderr, "Error: Could not track target pid\n");
+                        }
+#endif
+                        printf("New child has pid %d\n", p);
+                        //may need explicit cont here
+                    }
+                }
+                //in any case we resume...
+                if (ptrace(PTRACE_CONT, p_data->pid[i], NULL, NULL) == -1) {puts("????");}
+            }
         }
-
-        p_data->pid = PG_SCHED_NULL_PID;
     }
 
-    /* see if shadow is down */
-    /* pid = waitpid(p_data->shadow_pid, &ex_status, WNOHANG); */
-    /* if (pid == p_data->shadow_pid) { */
+    /* Check for termination */
+    bool should_stop = true;
+    for (int i = 0; i <= p_data->max_proc_idx; ++i){
+        if (p_data->pid[i] != PG_SCHED_NULL_PID){
+            should_stop = false;
+            break;
+        }
+    }
 
-    /*     if (WIFEXITED(ex_status)) { */
-    /*         if (p_data->pid != PG_SCHED_NULL_PID) */
-    /*             fprintf(stderr, "Shadow exited while target still running " */
-    /*                 " -- tearing down target\n"); */
-
-    /*         teardown_shadow(p_data); */
-    /*         terminate = true; */
-    /*     } */
-
-    /*     p_data->shadow_pid = PG_SCHED_NULL_PID; */
-    /* } */
-
+    if (should_stop) terminate = true;
+    
     return 0;
 }
 
@@ -636,7 +681,7 @@ setup_sigchld_handler(void)
 
     sa.sa_sigaction = &handle_sigchld_signal;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_NOCLDSTOP + SA_SIGINFO;
+    sa.sa_flags = /* SA_NOCLDSTOP +  */SA_SIGINFO;
 
     status = sigaction(SIGCHLD, &sa, NULL);
     if (status != 0) {
@@ -892,7 +937,7 @@ attach_to_pid_at_entry_point(struct program_data * data)
 {
     int t_status, status;
 
-    waitpid(data->pid, &t_status, 0);
+    waitpid(data->pid[0], &t_status, 0);
     if (WIFEXITED(t_status)) {
         fprintf(stderr, "Target process exited with status %d\n", 
                 WEXITSTATUS(t_status));
@@ -908,19 +953,34 @@ attach_to_pid_at_entry_point(struct program_data * data)
         data->exe
     );
 
+    //reconfigure ptrace settings
+    if (ptrace(PTRACE_SETOPTIONS, data->pid[0], 0, PTRACE_O_TRACEFORK) == -1){
+       fprintf(stderr, "Error: Could not change ptrace settings\n");
+       return -1;
+    }
+
+    //install our new sigchld handler
+    status = pg_sched_install_handlers(data);
+    if (status){
+        fprintf(stderr, "Error: Could not install handlers\n");
+        return status;
+    }
+    
+    #if 0
     /*Debug*/
-    dump_memory_map(data->pid);
+    dump_memory_map(data->pid[0]);
     
     /* Latch onto the stopped process */
-    status = pg_sched_track_pid(data);
+    status = pg_sched_track_pid(data, 0);
     if (status){
         fprintf(stderr, "Error: Could not track target pid\n");
         return status;
     }
+    #endif
     
     /* Tell the target to resume */
     errno = 0;
-    ptrace(PTRACE_CONT, data->pid, NULL, NULL);
+    ptrace(PTRACE_CONT, data->pid[0], NULL, NULL);
     if (errno){
         fprintf(stderr, "Error: Ptrace continue failed\n");
         return -1;
@@ -940,7 +1000,7 @@ setup_target(struct program_data * data)
         return status;
 
     /* fork/exec the target */
-    switch (data->pid = fork()) {
+    switch (data->pid[0] = fork()) {
         case -1:
             fprintf(stderr, "Failed to fork shadow process: %s\n", 
                 strerror(errno));
@@ -1000,6 +1060,40 @@ setup_target(struct program_data * data)
     return 0;
 }
 
+static int
+pg_sched_install_handlers(struct program_data * data)
+{
+    int status;
+    /* create hashtable of select'able fds */
+    fd_to_handler_table = invirt_create_htable(0, fd_hash_fn, fd_eq_fn);
+    if (fd_to_handler_table == NULL) {
+        fprintf(stderr, "Could not create hashtable\n");
+        return -1;
+    }
+
+    /* catch SICHLD */
+    status = setup_sigchld_handler();
+    if (status != 0) {
+        fprintf(stderr, "Could not setup SIGCHLD handler\n");
+        return -1;
+    }
+
+    /* catch SIGINT */
+    status = setup_sigint_handler();
+    if (status != 0) {
+        fprintf(stderr, "Could not setup SIGINT handler\n");
+        return -1;
+    }
+
+    /* track various fds that signal events */
+    status = monitor_fds(data);
+    if (status != 0) {
+        fprintf(stderr, "Could not monitor file descriptors\n");
+        return -1;
+    }
+    return 0;
+}
+
 int main(int     argc,
          char ** argv,
          char ** envp)
@@ -1014,52 +1108,29 @@ int main(int     argc,
     }
 
     memset(data, 0, sizeof(struct program_data));
-    data->pid = PG_SCHED_NULL_PID;
+    data->pid[0] = PG_SCHED_NULL_PID;
 
+#if PG_SCHED_DEV_ON
+    data->dev_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags);
+    if (data->dev_fd == -1){
+        fprintf(stderr, "Couldn't open " PG_SCHED_DEVICE_PATH "\n");
+        goto out;
+    }
+#endif
     /* parse cmd line to generate program data */
     status = parse_cmd_line(argc, argv, envp, data);
     if (status != 0)
         goto out;
-
+    
     /* start the target and intercept it at its entry point */
+    /* Install new handlers before resuming */
     status = setup_target(data);
     if (status != 0) {
         fprintf(stderr, "Could not setup target process\n");
         goto out;
     }
 
-        /* do some other miscellaneous post-processing */
-    {
-        /* create hashtable of select'able fds */
-        fd_to_handler_table = invirt_create_htable(0, fd_hash_fn, fd_eq_fn);
-        if (fd_to_handler_table == NULL) {
-            fprintf(stderr, "Could not create hashtable\n");
-            goto out;
-        }
-
-        /* catch SICHLD */
-        status = setup_sigchld_handler();
-        if (status != 0) {
-            fprintf(stderr, "Could not setup SIGCHLD handler\n");
-            goto out;
-        }
-
-        /* catch SIGINT */
-        status = setup_sigint_handler();
-        if (status != 0) {
-            fprintf(stderr, "Could not setup SIGINT handler\n");
-            goto out;
-        }
-
-        /* track various fds that signal events */
-        status = monitor_fds(data);
-        if (status != 0) {
-            fprintf(stderr, "Could not monitor file descriptors\n");
-            goto out;
-        }
-    }
-
-        /* core event processing loop */
+    /* core event processing loop */
     terminate = false;
     while (!terminate) {
         struct fd_handler * handler;
@@ -1091,7 +1162,7 @@ int main(int     argc,
 
                 /* if we handled a sigchld, don't keep processing */
                 if (i == sigchld_pipe[0]) {
-                    terminate = true;
+                    /* terminate = true; */
                     break;
                 }
             }
@@ -1100,10 +1171,17 @@ int main(int     argc,
     
  out:
     /* teardown target/shadow if either is still running */
-    if (data->pid != PG_SCHED_NULL_PID)
-        kill_and_teardown_target(data);
+    for (int i = 0; i < data->max_proc_idx; ++i)
+        if (data->pid[i] != PG_SCHED_NULL_PID)
+            kill_and_teardown_target(data, i);
 
-    
+    teardown_target(data);
+#if PG_SCHED_DEV_ON
+    status = close(data->dev_fd);
+    if (status){
+        puts("Error closing " PG_SCHED_DEVICE_PATH "\n");
+    }
+#endif
     
     return status;
 }

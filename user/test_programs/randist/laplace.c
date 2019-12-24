@@ -36,15 +36,7 @@ main (void)
     
   /*Open Device*/
   int status;
-  int device_fd;
-  int dev_open_flags = 0;
   struct timeval start, stop;
-
-  device_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags);
-  if (device_fd == -1){
-    puts("Couldn't open " PG_SCHED_DEVICE_PATH "\n");
-    return -1;
-  }
 
   /*mmap region*/
   char * region;
@@ -91,13 +83,6 @@ main (void)
     }
     gettimeofday(&stop, NULL);
   } while (get_timediff(&start, &stop) < 300.0);
-
-
-  status = close(device_fd);
-  if (status){
-    puts("Error closing " PG_SCHED_DEVICE_PATH "\n");
-    return status;
-  }
 
   status = munmap(region, length);
   if (status){

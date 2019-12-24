@@ -20,7 +20,6 @@
 
 #include <pg_sched.h>
 #include "hashtable.h"
-#include "memory_map.h"
 
 #define PG_SCHED_NULL_PID 0
 #define PG_SCHED_MAX_PROCS 100
@@ -917,17 +916,17 @@ target(struct program_data * data)
     return execve(data->exe, data->argv, data->envp);
 }
 
-static void
-dump_memory_map(pid_t target_pid)
-{
-    int status;
+/* static void */
+/* dump_memory_map(pid_t target_pid) */
+/* { */
+/*     int status; */
 
-    status = pg_sched_dump_memory_map(target_pid);
-    if (status != 0){
-	fprintf(stderr, "Couldn't parse memory map!\n");
-	return;
-    }
-}
+/*     status = pg_sched_dump_memory_map(target_pid); */
+/*     if (status != 0){ */
+/* 	fprintf(stderr, "Couldn't parse memory map!\n"); */
+/* 	return; */
+/*     } */
+/* } */
 
 /*
  * waitpid() will return once the tracee invokes exec

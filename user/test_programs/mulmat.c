@@ -8,8 +8,6 @@
 #include <sys/mman.h>
 #include <sys/time.h>
 
-#include <pg_sched.h>
-
 #define N 1024
 
 static void
@@ -31,29 +29,9 @@ matrix_multiply(int * A,
 	C[i*N + j]+= A[i*N + k] + B[k*N + j];
 }
 
-  /* status = ioctl(device_fd, PG_SCHED_SCAN_PT, NULL); */
-  /* if (status == -1){ */
-  /*   puts("IOCTL ERROR\n"); */
-  /*   return status; */
-  /* } */
-
 int main(int argc, char **argv){
   int status;
-  int device_fd;
-  int dev_open_flags = 0;
   struct timeval start, stop;
-
-  device_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags);
-  if (device_fd == -1){
-    puts("Couldn't open " PG_SCHED_DEVICE_PATH "\n");
-    return -1;
-  }
-
-  status = ioctl(device_fd, PG_SCHED_SCAN_PT, NULL);
-  if (status == -1){
-    puts("IOCTL ERROR\n");
-    return status;
-  }
 
   int *A, *B, *C;
   
@@ -71,21 +49,9 @@ int main(int argc, char **argv){
 
   print_timediff(&start, &stop);
 
-  /* status = ioctl(device_fd, PG_SCHED_SCAN_PT, NULL); */
-  /* if (status == -1){ */
-  /*   puts("IOCTL ERROR\n"); */
-  /*   return status; */
-  /* } */
-
   munmap(A, length);
   munmap(B, length);
   munmap(C, length);
-  
-  status = close(device_fd);
-  if (status){
-    puts("Error closing " PG_SCHED_DEVICE_PATH "\n");
-    return status;
-  }
-  
+    
   return 0;
 }

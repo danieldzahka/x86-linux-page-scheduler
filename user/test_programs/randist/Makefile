@@ -2,18 +2,20 @@
 .PHONY:all
 all: randnorm laplace
 
-randnorm: randnorm.o
+bin/randnorm: randnorm.o | bin
 	gcc -o $@ -L/usr/local/lib -I.. -I../../include $^ -lgsl -lgslcblas -lm
 
 randnorm.o: randnorm.c
 	gcc -Wall -I/usr/local/include -I.. -I../../include -c $^
 
-laplace: laplace.o
+bin/laplace: laplace.o | bin
 	gcc -o $@ -L/usr/local/lib -I.. -I../../include $^ -lgsl -lgslcblas -lm
 
 laplace.o: laplace.c
 	gcc -Wall -I/usr/local/include -I.. -I../../include -c $^
 
+bin:
+	mkdir bin
 
 .PHONY:clean
 clean:

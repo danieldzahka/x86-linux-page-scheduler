@@ -45,7 +45,7 @@ struct tracked_process {
 
     struct list_head initial_vma_list; /*.so's and other stuff I dont want to touch*/
     
-    struct {
+    struct scanner_params {
         ktime_t kt;
         struct hrtimer timer;
         struct task_struct* scanner_thread;

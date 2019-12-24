@@ -966,9 +966,9 @@ attach_to_pid_at_entry_point(struct program_data * data)
         return status;
     }
     
-    #if 0
+    #if PG_SCHED_DEV_ON
     /*Debug*/
-    dump_memory_map(data->pid[0]);
+    /* dump_memory_map(data->pid[0]); */
     
     /* Latch onto the stopped process */
     status = pg_sched_track_pid(data, 0);

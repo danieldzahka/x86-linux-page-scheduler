@@ -24,19 +24,15 @@ module_param(pg_sched_debug, int, 0644);
 
 static LIST_HEAD(pg_sched_tracked_pids);
 
-static struct {
-    ktime_t * kt;
-    struct task_struct* scanner_thread;
-} global_timer_params;
-
-/* timer function */
-/* Wow, I can't pass non static data to this... f&*# */
-//USE CONTAINER OF MACRO TO GET AROUND THIS...
+/* Timer Function */
 enum hrtimer_restart
 expiration_func(struct hrtimer * tim)
 {
-    wake_up_process(global_timer_params.scanner_thread);
-    hrtimer_forward_now(tim, *global_timer_params.kt);
+    struct scanner_params * p;
+    
+    p = container_of(tim, struct scanner_params, timer);
+    wake_up_process(p->scanner_thread);
+    hrtimer_forward_now(tim, p->kt);
 
     return HRTIMER_RESTART;
 }
@@ -82,14 +78,12 @@ scanner_func(void * args)
     
     while(1){
 	count_vmas(tracked_proc_struct);
-        printk(KERN_INFO "Hello\n");
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule();
 	if(kthread_should_stop()){
 	    break;
 	}
     }
-    printk(KERN_ALERT "Exiting the loop, Terminating thread\n");
     kref_put(&tracked_proc_struct->refcount, tracked_proc_struct->release);
     return 0;
 }
@@ -187,7 +181,6 @@ init_tracked_process(struct tracked_process * this,
                 (vma->vm_flags & VM_SPECIAL) /* VDSO? Maybe other junk? */)
                 continue; 
 
-	    printk("Does anything even get here?\n");
             init_vma = kzalloc(sizeof(struct initial_vma), GFP_KERNEL);
             if (!init_vma){
                 printk(KERN_EMERG "Couldnt allocate init vma\n");
@@ -204,10 +197,6 @@ init_tracked_process(struct tracked_process * this,
     /* Launch Thread from Here? */
     this->scanner_thread_struct.scanner_thread = kthread_run(scanner_func, this, "pg_sched_scanner");
     if (this->scanner_thread_struct.scanner_thread){
-        //Need a better way...
-        global_timer_params.kt = &this->scanner_thread_struct.kt;
-        global_timer_params.scanner_thread = this->scanner_thread_struct.scanner_thread;
-
         hrtimer_start(&this->scanner_thread_struct.timer,
                       this->scanner_thread_struct.kt,
                       HRTIMER_MODE_REL);
@@ -233,6 +222,7 @@ allocate_track_vma(struct tracked_process * this,
     res->num_pages     = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
 	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;;
     INIT_LIST_HEAD(&res->linkage);
+    WARN_ON(res->num_pages <= 0);
     res->page_accesses = kzalloc(res->num_pages * sizeof(struct page_desc), GFP_KERNEL);
 
     if (IS_ERR(res->page_accesses)){
@@ -325,7 +315,7 @@ remove_tracker_from_list(pid_t pid)
     }
 
     WARN_ON(obj == NULL);
-    
+
     if (obj != NULL){
         list_del(&obj->linkage); /* Remove from List */
         stop_scanner_thread(obj);
@@ -373,7 +363,7 @@ static int
 pg_sched_open(struct inode * inodep,
 	      struct file  * filp)
 {
-    if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device opened\n");
+    /* if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device opened\n"); */
     return 0;
 }
 
@@ -381,7 +371,7 @@ static int
 pg_sched_release(struct inode * inodep,
 		 struct file  * filp)
 {
-    if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device released\n");
+    /* if (pg_sched_debug) printk(KERN_DEBUG "pg_sched device released\n"); */
     return 0;
 }
 

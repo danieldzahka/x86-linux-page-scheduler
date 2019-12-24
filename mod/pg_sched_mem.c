@@ -206,7 +206,7 @@ count_vmas(struct tracked_process * target_tracker)
     
     down_write(&(mm->mmap_sem));
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
-	printk(KERN_EMERG "VMA ADDRESS: %lx - %lx\n", vma->vm_start, vma->vm_end);
+	/* printk(KERN_EMERG "VMA ADDRESS: %lx - %lx\n", vma->vm_start, vma->vm_end); */
 	/* This can never end well... */
 	/* if (!vma_is_anonymous(vma)) continue; /\*Only interested in Anon*\/ */
 	/* if (my_vma_is_stack_for_current(vma)) continue; /\*Don't count the stack*\/ */
@@ -224,8 +224,6 @@ count_vmas(struct tracked_process * target_tracker)
 	}
 	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
 	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
-	printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
-	pg_walk_data.user_pages_4KB = 0; //reset
     }
     up_write(&(mm->mmap_sem));
 
@@ -239,6 +237,6 @@ count_vmas(struct tracked_process * target_tracker)
     /* if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status); */
     /* if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n"); */
     
-    /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
+    printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
     /* printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1); */
 }

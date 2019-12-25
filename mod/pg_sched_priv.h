@@ -57,6 +57,6 @@ struct tracked_process {
 int
 get_vma_desc_add_if_absent(struct tracked_process * this,
                            struct vm_area_struct * vma,
-                           struct vma_desc * res);
+                           struct vma_desc ** res);
 
 #endif /* __PG_SCHED_PRIV_H__ */

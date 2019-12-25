@@ -208,29 +208,38 @@ init_tracked_process(struct tracked_process * this,
     return 0;
 }
 
+void
+free_unctouched_vmas(struct tracked_process * this){
+    struct vma_desc * vma_d;
+    
+    list_for_each_entry(){
+	
+    }
+}
+
 static int
 allocate_track_vma(struct tracked_process * this,
                    struct vm_area_struct  * vma,
-                   struct vma_desc        * res)
+                   struct vma_desc        ** res)
 {
-    res = kzalloc(sizeof(struct vma_desc), GFP_KERNEL);
+    *res = kzalloc(sizeof(struct vma_desc), GFP_KERNEL);
 
-    res->vma           = vma;
-    res->vm_start      = vma->vm_start;
-    res->vm_end        = vma->vm_end;
-    res->page_accesses = NULL;
-    res->num_pages     = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
+    (*res)->vma           = vma;
+    (*res)->vm_start      = vma->vm_start;
+    (*res)->vm_end        = vma->vm_end;
+    (*res)->page_accesses = NULL;
+    (*res)->num_pages     = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
 	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;;
-    INIT_LIST_HEAD(&res->linkage);
-    WARN_ON(res->num_pages <= 0);
-    res->page_accesses = kzalloc(res->num_pages * sizeof(struct page_desc), GFP_KERNEL);
+    INIT_LIST_HEAD(&(*res)->linkage);
+    if ((*res)->num_pages <= 0) printk(KERN_EMERG "num_pages == 0\n");
+    (*res)->page_accesses = kzalloc((*res)->num_pages * sizeof(struct page_desc), GFP_KERNEL);
 
-    if (IS_ERR(res->page_accesses)){
+    if (!(*res)->page_accesses){
 	printk(KERN_EMERG "Error Allocating page access vector\n");
 	return -1;
     }
 
-    list_add(&res->linkage, &this->vma_desc_list);
+    list_add(&(*res)->linkage, &this->vma_desc_list);
     this->vma_desc_list_length++;
     
     return 0;
@@ -240,7 +249,7 @@ allocate_track_vma(struct tracked_process * this,
 int
 get_vma_desc_add_if_absent(struct tracked_process * this,
                            struct vm_area_struct * vma,
-                           struct vma_desc * res)
+                           struct vma_desc ** res)
 {
     int status;
     struct vma_desc * p;
@@ -253,7 +262,7 @@ get_vma_desc_add_if_absent(struct tracked_process * this,
                 stale = 1;
                 break;
 	    } else {
-                res = p;
+                *res = p;
                 return 0;
             }
         }

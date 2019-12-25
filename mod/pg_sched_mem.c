@@ -16,6 +16,8 @@
 #include <pg_sched_mem.h>
 #include <pg_sched_priv.h>
 
+#define PRINT_IF_NULL(ptr,NUM) do {if (!(ptr)) printk(KERN_EMERG "FOUND IT! %d\n", NUM);} while(0);
+
 static int
 is_new_vma(struct tracked_process * target_tracker,
 	   struct vm_area_struct *vma)
@@ -84,7 +86,7 @@ pte_callback(pte_t *pte,
     
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
-    #if 0
+    #if 1
     
     /*
       1) bump refcount for page (Don't think I need to do this)
@@ -93,11 +95,14 @@ pte_callback(pte_t *pte,
       4) add to list by linkage on lru field?
       call migrate_pages -> This should do the rest?
      */
+    PRINT_IF_NULL(migration_list, 0);
 
     /* Holy Shit */
     page = pte_page(*pte);
+    PRINT_IF_NULL(page, 1);
     /* printk(KERN_INFO "refcount on the page is %d\n", page_count(page)); */
     pgdat = page_pgdat(page);
+    PRINT_IF_NULL(pgdat, 2);
     if (pgdat->node_id == 0)
     	++walk_data->n0;
     else
@@ -108,8 +113,14 @@ pte_callback(pte_t *pte,
     /* 	is_lru = PageLRU(page); */
     /* 	printk(KERN_INFO "is lru? : %d\n", is_lru); */
     /* } */
+
     should_move = 0;
     pg_off = (addr - walk_data->vma_desc->vm_start) >> 12;
+    PRINT_IF_NULL(walk_data, 3);
+    PRINT_IF_NULL(walk_data->vma_desc, 4);
+    PRINT_IF_NULL(walk_data->vma_desc->page_accesses, 5);
+    if (pg_off >= walk_data->vma_desc->num_pages) printk(KERN_EMERG "OUT OF RANGE\n");
+    //Beware of resized VMAS -> do index check here make sure at least as big/bigger
     walk_data->vma_desc->page_accesses[pg_off].node = pgdat->node_id;
     if (pte_young(*pte)){
     	*pte = pte_mkold(*pte);//mkold
@@ -216,7 +227,7 @@ count_vmas(struct tracked_process * target_tracker)
 	    (!is_new_vma(target_tracker, vma))) continue;
 
 	status = get_vma_desc_add_if_absent(target_tracker, vma,
-				   pg_walk_data.vma_desc);
+				   &pg_walk_data.vma_desc);
 
 	if (status){
 	    printk(KERN_EMERG "Error: get_vma_desc_add_if_absent failed!\n");
@@ -231,12 +242,15 @@ count_vmas(struct tracked_process * target_tracker)
     /*Figure out how to put stuff back on the LRU if we can't move it */
     /*Unless of course, migrate_pages does this already */
 
-    /* status = my_migrate_pages(&migration_list, pg_sched_alloc, */
-    /* 			   NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED); */
+    if (pg_walk_data.list_size){
+	printk(KERN_EMERG "Attempting to migrate page\n");
+	status = my_migrate_pages(&migration_list, pg_sched_alloc,
+				  NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
 
-    /* if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status); */
-    /* if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n"); */
+	if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status);
+	if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");	
+    }
     
-    printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB);
-    /* printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1); */
+    /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
+    printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);
 }

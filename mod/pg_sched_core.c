@@ -40,7 +40,14 @@ expiration_func(struct hrtimer * tim)
 static void
 free_vma_desc(struct vma_desc * desc)
 {
-    kfree(desc->page_accesses);
+    if (desc->alloc_method == KMALLOC){
+	kfree(desc->page_accesses);
+    } else if (desc->alloc_method == VMALLOC) {
+	vfree(desc->page_accesses);
+    } else {
+	printk(KERN_ALERT "FREEING MEMORY not V/K malloc\n");
+    }
+
     kfree(desc);
 }
 
@@ -166,7 +173,7 @@ init_tracked_process(struct tracked_process * this,
     kref_init(&this->refcount); /* +1 for global linked list */
     INIT_LIST_HEAD(&this->linkage);
     INIT_LIST_HEAD(&this->vma_desc_list);
-    this->vma_desc_list_length = 0;
+    /* this->vma_desc_list_length = 0; */
 
     INIT_LIST_HEAD(&this->initial_vma_list);
     {
@@ -210,10 +217,16 @@ init_tracked_process(struct tracked_process * this,
 
 void
 free_unctouched_vmas(struct tracked_process * this){
-    struct vma_desc * vma_d;
+    struct vma_desc * vma_d, *n;
     
-    list_for_each_entry(){
-	
+    list_for_each_entry_safe(vma_d, n, &this->vma_desc_list, linkage){
+	if (vma_d->touched == 0){
+	    /* printk(KERN_EMERG "Freeing stale VMA\n"); */
+	    list_del(&vma_d->linkage);//list del
+	    free_vma_desc(vma_d);
+	} else {
+	    vma_d->touched = 0; //reset
+	}
     }
 }
 
@@ -224,6 +237,11 @@ allocate_track_vma(struct tracked_process * this,
 {
     *res = kzalloc(sizeof(struct vma_desc), GFP_KERNEL);
 
+    if (!(*res)) {
+	printk(KERN_EMERG "Error Allocating vma_desc\n");
+	return -1;
+    }
+    
     (*res)->vma           = vma;
     (*res)->vm_start      = vma->vm_start;
     (*res)->vm_end        = vma->vm_end;
@@ -231,16 +249,24 @@ allocate_track_vma(struct tracked_process * this,
     (*res)->num_pages     = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
 	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;;
     INIT_LIST_HEAD(&(*res)->linkage);
-    if ((*res)->num_pages <= 0) printk(KERN_EMERG "num_pages == 0\n");
-    (*res)->page_accesses = kzalloc((*res)->num_pages * sizeof(struct page_desc), GFP_KERNEL);
+    /* if ((*res)->num_pages <= 0) printk(KERN_EMERG "num_pages == 0\n"); */
+    if ((*res)->num_pages >= MAX_ORDER_NR_PAGES){
+	(*res)->page_accesses = vmalloc((*res)->num_pages * sizeof(struct page_desc));
+	(*res)->alloc_method = VMALLOC;
+    } else {
+	(*res)->page_accesses = kzalloc((*res)->num_pages * sizeof(struct page_desc), GFP_KERNEL);
+	(*res)->alloc_method = KMALLOC;
+    }
+    
 
     if (!(*res)->page_accesses){
 	printk(KERN_EMERG "Error Allocating page access vector\n");
+	kfree(*res);
 	return -1;
     }
 
     list_add(&(*res)->linkage, &this->vma_desc_list);
-    this->vma_desc_list_length++;
+    /* this->vma_desc_list_length++; */
     
     return 0;
 }
@@ -270,8 +296,8 @@ get_vma_desc_add_if_absent(struct tracked_process * this,
 
     if (stale){
         list_del(&p->linkage);
-        this->vma_desc_list_length--;
-        WARN_ON(this->vma_desc_list_length < 0);
+        /* this->vma_desc_list_length--; */
+        /* WARN_ON(this->vma_desc_list_length < 0); */
         free_vma_desc(p);
     }
 

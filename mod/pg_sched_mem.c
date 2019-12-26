@@ -233,6 +233,9 @@ count_vmas(struct tracked_process * target_tracker)
 	    printk(KERN_EMERG "Error: get_vma_desc_add_if_absent failed!\n");
 	    continue;
 	}
+	
+	pg_walk_data.vma_desc->touched = 1;
+	
 	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
 	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
     }
@@ -250,6 +253,9 @@ count_vmas(struct tracked_process * target_tracker)
 	if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status);
 	if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");	
     }
+
+    /* Free Stale VMA_DESC */
+    free_unctouched_vmas(target_tracker);
     
     /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
     printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);

@@ -14,13 +14,20 @@ struct page_desc {
     int node;
 };
 
+enum desc_alloc_method {
+    KMALLOC,
+    VMALLOC,
+};
+
 struct vma_desc {
     struct vm_area_struct * vma; /*Use as key*/
     unsigned long           vm_start;
     unsigned long           vm_end;
     struct page_desc *      page_accesses;
     int                     num_pages;
-
+    int                     touched;
+    enum desc_alloc_method  alloc_method;
+    
     struct list_head linkage; /* struct tracked_process -> vma_list */
 };
 
@@ -41,7 +48,7 @@ struct tracked_process {
     struct list_head linkage; /* List: (static global) pg_sched_tracked_pids */
 
     struct list_head vma_desc_list; /* VMA's that we are watching */
-    int vma_desc_list_length; /* For debugging merged or disappearing vma's */
+    /* int vma_desc_list_length; /\* For debugging merged or disappearing vma's *\/ */
 
     struct list_head initial_vma_list; /*.so's and other stuff I dont want to touch*/
     
@@ -53,6 +60,8 @@ struct tracked_process {
     
     void (*release) (struct kref * refc);
 };
+
+void free_unctouched_vmas(struct tracked_process * this);
 
 int
 get_vma_desc_add_if_absent(struct tracked_process * this,

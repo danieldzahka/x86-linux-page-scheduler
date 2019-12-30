@@ -44,6 +44,7 @@ struct pg_walk_data
     struct list_head * list;
     int list_size;
     struct vma_desc * vma_desc;
+    int migration_enabled;
 };
 
 struct page* pg_sched_alloc(struct page *page, unsigned long private)
@@ -65,7 +66,7 @@ fake_migrate_pages my_migrate_pages = NULL;
 //consider looking up walk_vma here so ppl dont need to recompile the kernel
 
 //These should get added to the tracker object...
-static int current_period = 0;
+
 static int threshold = 10;
 static int max_pages = 1000;
 
@@ -107,6 +108,10 @@ pte_callback(pte_t *pte,
     	++walk_data->n0;
     else
     	++walk_data->n1;
+
+    if (walk_data->migration_enabled == 0) {
+	return 0;
+    }
     /* printk(KERN_INFO "NUMA NODE %d\n", pgdat->node_id); */
     /* { */
     /* 	int is_lru; */
@@ -119,18 +124,21 @@ pte_callback(pte_t *pte,
     PRINT_IF_NULL(walk_data, 3);
     PRINT_IF_NULL(walk_data->vma_desc, 4);
     PRINT_IF_NULL(walk_data->vma_desc->page_accesses, 5);
-    if (pg_off >= walk_data->vma_desc->num_pages) printk(KERN_EMERG "OUT OF RANGE\n");
+    if (pg_off >= walk_data->vma_desc->num_pages){
+	printk(KERN_EMERG "OUT OF RANGE\n");
+	return 0;
+    }
     //Beware of resized VMAS -> do index check here make sure at least as big/bigger
-    walk_data->vma_desc->page_accesses[pg_off].node = pgdat->node_id;
+    /* walk_data->vma_desc->page_accesses[pg_off].node = pgdat->node_id; */
     if (pte_young(*pte)){
     	*pte = pte_mkold(*pte);//mkold
-	walk_data->vma_desc->page_accesses[pg_off].last_touched = current_period;
-	walk_data->vma_desc->page_accesses[pg_off].accesses++;
+	walk_data->vma_desc->page_accesses[pg_off].age = 0;
+	/* walk_data->vma_desc->page_accesses[pg_off].accesses++; */
 	if (pgdat->node_id == 1){
 	    //should_move = 1; //fault back in
 	}
     } else {
-	if (current_period - walk_data->vma_desc->page_accesses[pg_off].last_touched > threshold){
+	if (walk_data->vma_desc->page_accesses[pg_off].age > threshold){
 	    should_move = 1;
 	}
     }
@@ -202,6 +210,7 @@ count_vmas(struct tracked_process * target_tracker)
 	    .list              = &migration_list,
 	    .list_size         = 0,
 	    .vma_desc          = NULL,
+	    .migration_enabled = target_tracker->migration_enabled,
 	};
 
 
@@ -213,8 +222,7 @@ count_vmas(struct tracked_process * target_tracker)
 	};
 
     mm = target_tracker->mm;
-    current_period++;
-    
+        
     down_write(&(mm->mmap_sem));
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
 	/* printk(KERN_EMERG "VMA ADDRESS: %lx - %lx\n", vma->vm_start, vma->vm_end); */

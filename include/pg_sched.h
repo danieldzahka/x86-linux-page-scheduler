@@ -32,6 +32,7 @@
 /* IOCTL ARGS*/
 struct track_pid_arg {
     pid_t pid;
+    int   enable_migration;
 };
 
 struct untrack_pid_arg {

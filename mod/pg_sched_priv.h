@@ -9,9 +9,9 @@ struct initial_vma {
 };
 
 struct page_desc {
-    int accesses;
-    int last_touched;
-    int node;
+    char age;
+    /* int accesses; */
+    /* int node; */
 };
 
 enum desc_alloc_method {

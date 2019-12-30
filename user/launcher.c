@@ -23,7 +23,7 @@
 
 #define PG_SCHED_NULL_PID 0
 #define PG_SCHED_MAX_PROCS 100
-#define PG_SCHED_DEV_ON 0
+#define PG_SCHED_DEV_ON 1
 
 struct program_data {
     char * this_exe;
@@ -34,6 +34,7 @@ struct program_data {
     pid_t pid[PG_SCHED_MAX_PROCS];
     bool  tracker_freed[PG_SCHED_MAX_PROCS];
     int max_proc_idx;
+    int enable_migration;
 
     /* target argc/argv/envp */
     int argc;
@@ -381,6 +382,7 @@ pg_sched_track_pid(struct program_data * data,
     int dev_open_flags = 0;
     struct track_pid_arg arg = {
         .pid = data->pid[i],
+	.enable_migration = data->enable_migration,
     };
 
     /* data->dev_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags); */
@@ -722,7 +724,8 @@ usage(FILE  * out_stream,
         "Usage: %s [OPTIONS] <exe> <arguments ...>\n"
         "    -h (--help)        : print help and exit\n"
         "    -x (--exclude-env) : do not inherit current environment in"
-                " target process\n",
+                " target process\n"
+	"    -m (--enable-migration) : enable page migrations\n",
         *argv
     );
     fflush(out_stream);
@@ -784,17 +787,19 @@ parse_cmd_line(int                   argc,
         {
          {"help",        no_argument,        0,  'h'},
          {"exclude-env", no_argument,        0,  'x'},
+	 {"enable-migration", no_argument,   0,  'm'},
          {0,             0,                  0,  0}
         };
 
     opterr = 0; // quell error messages
 
     /* memset(data, 0, sizeof(struct program_data)); */
+    data->enable_migration = 0; //default off
 
     while (1) {
         int c;
         
-        c = getopt_long_only(argc, argv, "+hx", long_options, &opt_index);
+        c = getopt_long_only(argc, argv, "+hxm", long_options, &opt_index);
         if (c == -1)
             break;
 
@@ -805,6 +810,10 @@ parse_cmd_line(int                   argc,
 
         case 'x':
             inherit_env = false;
+            break;
+
+        case 'm':
+            data->enable_migration = 1;
             break;
 
         case '?':
@@ -1110,6 +1119,7 @@ int main(int     argc,
     data->pid[0] = PG_SCHED_NULL_PID;
 
 #if PG_SCHED_DEV_ON
+    int dev_open_flags = 0;
     data->dev_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags);
     if (data->dev_fd == -1){
         fprintf(stderr, "Couldn't open " PG_SCHED_DEVICE_PATH "\n");

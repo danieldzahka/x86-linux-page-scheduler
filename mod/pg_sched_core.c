@@ -134,6 +134,7 @@ tracked_process_release(struct kref * refc)
 static int
 init_tracked_process(struct tracked_process * this,
                      pid_t pid,
+		     int migration_enabled,
                      unsigned long log_sec,
                      unsigned long log_nsec)
 {
@@ -141,7 +142,7 @@ init_tracked_process(struct tracked_process * this,
     struct task_struct * tsk;
     
     this->pid = pid;
-    this->migration_enabled = 0;
+    this->migration_enabled = migration_enabled;
     this->policy.scans_to_be_idle = 10;
     this->policy.period.sec  = log_sec;
     this->policy.period.nsec = log_nsec;
@@ -251,7 +252,10 @@ allocate_track_vma(struct tracked_process * this,
     INIT_LIST_HEAD(&(*res)->linkage);
     /* if ((*res)->num_pages <= 0) printk(KERN_EMERG "num_pages == 0\n"); */
     if ((*res)->num_pages >= MAX_ORDER_NR_PAGES){
+	printk(KERN_ALERT "vmalloc %d\n", (*res)->num_pages / MAX_ORDER_NR_PAGES);
 	(*res)->page_accesses = vmalloc((*res)->num_pages * sizeof(struct page_desc));
+	if ((*res)->page_accesses)
+	    memset((*res)->page_accesses, 0, (*res)->num_pages * sizeof(struct page_desc));
 	(*res)->alloc_method = VMALLOC;
     } else {
 	(*res)->page_accesses = kzalloc((*res)->num_pages * sizeof(struct page_desc), GFP_KERNEL);
@@ -266,7 +270,6 @@ allocate_track_vma(struct tracked_process * this,
     }
 
     list_add(&(*res)->linkage, &this->vma_desc_list);
-    /* this->vma_desc_list_length++; */
     
     return 0;
 }
@@ -311,7 +314,8 @@ get_vma_desc_add_if_absent(struct tracked_process * this,
 }
 
 static int
-allocate_tracker_and_add_to_list(pid_t pid)
+allocate_tracker_and_add_to_list(pid_t pid,
+				 int migration_enabled)
 {
     struct tracked_process * tracked_pid;
     int status;
@@ -322,7 +326,7 @@ allocate_tracker_and_add_to_list(pid_t pid)
         return -1;
     }
     
-    status = init_tracked_process(tracked_pid, pid, 1, 0);
+    status = init_tracked_process(tracked_pid, pid, migration_enabled, 1, 0);
     if (status){
         printk(KERN_ALERT "struct track process init failed\n");
         if (status == - 2) kref_put(&tracked_pid->refcount, tracked_pid->release);
@@ -437,7 +441,8 @@ pg_sched_ioctl(struct file * filp,
                 break;
             }
             printk(KERN_INFO "tracking pid: %d\n", my_arg.pid);
-            status = allocate_tracker_and_add_to_list(my_arg.pid);
+	    printk(KERN_INFO "Migration Enabled? %d\n", my_arg.enable_migration);
+            status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration);
             if (status){
                 printk(KERN_ALERT "Error Allocating tracker\n");
                 break;

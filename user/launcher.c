@@ -23,7 +23,9 @@
 
 #define PG_SCHED_NULL_PID 0
 #define PG_SCHED_MAX_PROCS 100
-#define PG_SCHED_DEV_ON 1
+#define PG_SCHED_DEV_ON 0
+
+#define TARGET_CMDLINE "/bin/ls"
 
 struct program_data {
     char * this_exe;
@@ -32,7 +34,9 @@ struct program_data {
     /* target data */
     char * exe;
     pid_t pid[PG_SCHED_MAX_PROCS];
+    pid_t managed_pid[PG_SCHED_MAX_PROCS];
     bool  tracker_freed[PG_SCHED_MAX_PROCS];
+    int managed_pids_size;
     int max_proc_idx;
     int enable_migration;
 
@@ -47,6 +51,17 @@ struct program_data {
     int target_outfd[2];
     int target_errfd[2];
 };
+
+static int
+should_untrack_pid(struct program_data* data,
+                   pid_t pid)
+{
+    for (int i = 0; i < data->managed_pids_size; ++i){
+        if (pid == data->managed_pid[i]) return 1;
+    }
+    
+    return 0;
+}
 
 static int
 pg_sched_install_handlers(struct program_data * data);
@@ -385,6 +400,8 @@ pg_sched_track_pid(struct program_data * data,
 	.enable_migration = data->enable_migration,
     };
 
+    data->managed_pid[data->managed_pids_size++] = data->pid[i];
+
     /* data->dev_fd = open(PG_SCHED_DEVICE_PATH, dev_open_flags); */
     /* if (data->dev_fd == -1){ */
     /*     fprintf(stderr, "Couldn't open " PG_SCHED_DEVICE_PATH "\n"); */
@@ -430,13 +447,16 @@ static void
 kill_and_teardown_target(struct program_data * data, int i)
 {
     #if PG_SCHED_DEV_ON
-    int status;
-    
-    /* Tell module to release mm struct, close dev */
-    status = pg_sched_untrack_pid(data, i);
-    if (status){
-        fprintf(stderr, "Error: Could not untrack target pid\n");
+
+    if (should_untrack_pid(data, data->pid[i])) {
+        /* Tell module to release mm struct, close dev */
+        int status;
+        status = pg_sched_untrack_pid(data, i);
+        if (status){
+            fprintf(stderr, "Error: Could not untrack target pid\n");
+        }
     }
+    
     #endif
 
     kill(data->pid[i], SIGKILL);
@@ -475,6 +495,36 @@ kill_and_teardown_target(struct program_data * data, int i)
 /*
  * we received sigchld 
  */
+
+static int
+read_proc_cmdline (pid_t pid,
+                   char * target_name)
+{
+    char fname [64];
+    char buf [4096];
+    int status;
+    int fd;
+    ssize_t inbytes;
+
+    snprintf(fname, 64, "/proc/%d/cmdline", pid);
+
+    fd = open(fname, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "Failed to open %s: %s\n", fname, strerror(errno));
+        return -1;
+    }
+
+    char * p = buf;
+    while ((inbytes = read(fd, p, sizeof(buf))) > 0) {
+        p+= inbytes;
+    }
+    p[inbytes] = '\0';
+
+    /* printf("%d\n",strcmp(buf, target_name)); */
+
+    return strcmp(buf, target_name) == 0;
+}
+
 static int
 handle_sigchld(int    fd,
                void * priv_data)
@@ -504,11 +554,13 @@ handle_sigchld(int    fd,
 
                 /*This is where that ioctl bug was... was probably double called*/    
 #if PG_SCHED_DEV_ON
-                /* Tell module to release mm struct, close dev */
-                status = pg_sched_untrack_pid(p_data, i);
-                if (status){
-                    fprintf(stderr, "Error: Could not untrack target pid\n");
-                }
+                if (should_untrack_pid(p_data, p_data->pid[i])){
+                    /* Tell module to release mm struct, close dev */
+                    status = pg_sched_untrack_pid(p_data, i);
+                    if (status){
+                        fprintf(stderr, "Error: Could not untrack target pid\n");
+                    }
+                }                
 #endif
                 
                 /* teardown_target(p_data); */
@@ -528,16 +580,24 @@ handle_sigchld(int    fd,
                     } else {
                         pid_t p = (pid_t) child;
                         p_data->pid[++p_data->max_proc_idx] = p;
+                        printf("New child has pid %d\n", p);
+                        //may need explicit cont here
+                    }
+                }
+
+                if (ex_status>>8 == (SIGTRAP | (PTRACE_EVENT_EXEC<<8))) {
+                    if (read_proc_cmdline(p_data->pid[i], TARGET_CMDLINE)) {
+                        printf("Will Track pid: %d\n", p_data->pid[i]);
 #if PG_SCHED_DEV_ON
                         status = pg_sched_track_pid(p_data, p_data->max_proc_idx);
                         if (status){
                             fprintf(stderr, "Error: Could not track target pid\n");
                         }
 #endif
-                        printf("New child has pid %d\n", p);
-                        //may need explicit cont here
-                    }
+                    }                    
                 }
+
+                /* printf("dz %d\n", p_data->pid[i]); */
                 //in any case we resume...
                 if (ptrace(PTRACE_CONT, p_data->pid[i], NULL, NULL) == -1) {puts("????");}
             }
@@ -962,7 +1022,7 @@ attach_to_pid_at_entry_point(struct program_data * data)
     );
 
     //reconfigure ptrace settings
-    if (ptrace(PTRACE_SETOPTIONS, data->pid[0], 0, PTRACE_O_TRACEFORK) == -1){
+    if (ptrace(PTRACE_SETOPTIONS, data->pid[0], 0, PTRACE_O_TRACEFORK | PTRACE_O_TRACEEXEC) == -1){
        fprintf(stderr, "Error: Could not change ptrace settings\n");
        return -1;
     }
@@ -973,18 +1033,21 @@ attach_to_pid_at_entry_point(struct program_data * data)
         fprintf(stderr, "Error: Could not install handlers\n");
         return status;
     }
+
+    if (read_proc_cmdline(data->pid[0], TARGET_CMDLINE)){
+        puts("Hello");
+#if PG_SCHED_DEV_ON
+        /*Debug*/
+        /* dump_memory_map(data->pid[0]); */
     
-    #if PG_SCHED_DEV_ON
-    /*Debug*/
-    /* dump_memory_map(data->pid[0]); */
-    
-    /* Latch onto the stopped process */
-    status = pg_sched_track_pid(data, 0);
-    if (status){
-        fprintf(stderr, "Error: Could not track target pid\n");
-        return status;
+        /* Latch onto the stopped process */
+        status = pg_sched_track_pid(data, 0);
+        if (status){
+            fprintf(stderr, "Error: Could not track target pid\n");
+            return status;
+        }
+#endif
     }
-    #endif
     
     /* Tell the target to resume */
     errno = 0;

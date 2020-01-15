@@ -70,6 +70,7 @@ fake_migrate_pages my_migrate_pages = NULL;
 static int threshold = 10;
 static int max_pages = 1000;
 
+/* TO DO: Inform tracker if VMA is largely unevictable... */
 static int
 pte_callback(pte_t *pte,
 	     unsigned long addr,
@@ -86,7 +87,7 @@ pte_callback(pte_t *pte,
     int should_move;
     
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
-
+    
     #if 1
     
     /*
@@ -135,9 +136,13 @@ pte_callback(pte_t *pte,
 	walk_data->vma_desc->page_accesses[pg_off].age = 0;
 	/* walk_data->vma_desc->page_accesses[pg_off].accesses++; */
 	if (pgdat->node_id == 1){
-	    //should_move = 1; //fault back in
+	    should_move = 1; //fault back in
 	}
     } else {
+        /*Update Age*/
+        if (walk_data->vma_desc->page_accesses[pg_off].age < 250)
+            walk_data->vma_desc->page_accesses[pg_off].age++;
+        
 	if (walk_data->vma_desc->page_accesses[pg_off].age > threshold){
 	    should_move = 1;
 	}

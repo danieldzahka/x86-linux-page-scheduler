@@ -14,19 +14,19 @@ struct page_desc {
     /* int node; */
 };
 
-enum desc_alloc_method {
-    KMALLOC,
-    VMALLOC,
-};
+/* enum desc_alloc_method { */
+/*     KMALLOC, */
+/*     VMALLOC, */
+/* }; */
 
 struct vma_desc {
     struct vm_area_struct * vma; /*Use as key*/
     unsigned long           vm_start;
     unsigned long           vm_end;
     struct page_desc *      page_accesses;
-    int                     num_pages;
+    unsigned long           num_pages;
     int                     touched;
-    enum desc_alloc_method  alloc_method;
+    /* enum desc_alloc_method  alloc_method; */
     
     struct list_head linkage; /* struct tracked_process -> vma_list */
 };

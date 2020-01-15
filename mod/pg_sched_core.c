@@ -40,14 +40,14 @@ expiration_func(struct hrtimer * tim)
 static void
 free_vma_desc(struct vma_desc * desc)
 {
-    if (desc->alloc_method == KMALLOC){
-	kfree(desc->page_accesses);
-    } else if (desc->alloc_method == VMALLOC) {
-	vfree(desc->page_accesses);
-    } else {
-	printk(KERN_ALERT "FREEING MEMORY not V/K malloc\n");
-    }
-
+    /* if (desc->alloc_method == KMALLOC){ */
+    /*     kfree(desc->page_accesses); */
+    /* } else if (desc->alloc_method == VMALLOC) { */
+    /*     vfree(desc->page_accesses); */
+    /* } else { */
+    /*     printk(KERN_ALERT "FREEING MEMORY not V/K malloc\n"); */
+    /* } */
+    kvfree(desc->page_accesses);
     kfree(desc);
 }
 
@@ -231,6 +231,8 @@ free_unctouched_vmas(struct tracked_process * this){
     }
 }
 
+/* Need to check if the VMA is backed by huge pages somehow... */
+/* Needs to use kvcalloc... */
 static int
 allocate_track_vma(struct tracked_process * this,
                    struct vm_area_struct  * vma,
@@ -250,18 +252,25 @@ allocate_track_vma(struct tracked_process * this,
     (*res)->num_pages     = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
 	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;;
     INIT_LIST_HEAD(&(*res)->linkage);
+
     /* if ((*res)->num_pages <= 0) printk(KERN_EMERG "num_pages == 0\n"); */
-    if ((*res)->num_pages >= MAX_ORDER_NR_PAGES){
-	printk(KERN_ALERT "vmalloc %d\n", (*res)->num_pages / MAX_ORDER_NR_PAGES);
-	(*res)->page_accesses = vmalloc((*res)->num_pages * sizeof(struct page_desc));
-	if ((*res)->page_accesses)
-	    memset((*res)->page_accesses, 0, (*res)->num_pages * sizeof(struct page_desc));
-	(*res)->alloc_method = VMALLOC;
+    /* if ((((*res)->num_pages * sizeof(struct page_desc)) >> 12) >= MAX_ORDER_NR_PAGES){ */
+    /*     printk(KERN_ALERT "vmalloc %lu KB\n", (*res)->num_pages * sizeof(struct page_desc) >> 10); */
+    /*     (*res)->page_accesses = vzalloc(64/\* (*res)->num_pages * sizeof(struct page_desc) *\/); */
+    /*     /\* if ((*res)->page_accesses) *\/ */
+    /*     /\*     memset((*res)->page_accesses, 0, (*res)->num_pages * sizeof(struct page_desc)); *\/ */
+    /*     (*res)->alloc_method = VMALLOC; */
+    /* } else { */
+    /*     (*res)->page_accesses = kzalloc(64/\* (*res)->num_pages * sizeof(struct page_desc) *\/, GFP_KERNEL); */
+    /*     (*res)->alloc_method = KMALLOC; */
+    /* } */
+
+    if ( (vma->vm_start > vma->vm_end) || ((*res)->num_pages > 250000) ){
+        printk(KERN_ALERT "%lx - %lx , pages? %lu", vma->vm_start, vma->vm_end, (*res)->num_pages);
     } else {
-	(*res)->page_accesses = kzalloc((*res)->num_pages * sizeof(struct page_desc), GFP_KERNEL);
-	(*res)->alloc_method = KMALLOC;
+        /* Grant Allocation */
+        (*res)->page_accesses = kvcalloc((*res)->num_pages, sizeof (struct page_desc), GFP_KERNEL);
     }
-    
 
     if (!(*res)->page_accesses){
 	printk(KERN_EMERG "Error Allocating page access vector\n");

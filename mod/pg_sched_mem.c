@@ -148,7 +148,7 @@ pte_callback(pte_t *pte,
 	}
     }
     
-    if (PageLRU(page) && walk_data->list_size < max_pages &&
+    if (walk_data->migration_enabled && PageLRU(page) && walk_data->list_size < max_pages &&
     	!PageUnevictable(page) && should_move && pgdat->node_id == 0){
     	/*Try to add page to list */
     	/* 2) */
@@ -195,6 +195,7 @@ hugetlb_callback(pte_t *pte,
 }
 
 
+/* this function name has become quite a misnomer...*/
 void
 count_vmas(struct tracked_process * target_tracker)
 {
@@ -227,7 +228,9 @@ count_vmas(struct tracked_process * target_tracker)
 	};
 
     mm = target_tracker->mm;
-        
+
+    printk(KERN_ALERT "A\n");
+    
     down_write(&(mm->mmap_sem));
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
 	/* printk(KERN_EMERG "VMA ADDRESS: %lx - %lx\n", vma->vm_start, vma->vm_end); */
@@ -258,7 +261,7 @@ count_vmas(struct tracked_process * target_tracker)
     /*Figure out how to put stuff back on the LRU if we can't move it */
     /*Unless of course, migrate_pages does this already */
 
-    if (pg_walk_data.list_size){
+    if (target_tracker->migration_enabled && pg_walk_data.list_size){
 	printk(KERN_EMERG "Attempting to migrate page\n");
 	status = my_migrate_pages(&migration_list, pg_sched_alloc,
 				  NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
@@ -269,7 +272,8 @@ count_vmas(struct tracked_process * target_tracker)
 
     /* Free Stale VMA_DESC */
     free_unctouched_vmas(target_tracker);
-    
+
+    printk(KERN_ALERT "B\n");
     /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
     printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);
 }

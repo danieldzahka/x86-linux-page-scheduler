@@ -23,9 +23,9 @@
 
 #define PG_SCHED_NULL_PID 0
 #define PG_SCHED_MAX_PROCS 100
-#define PG_SCHED_DEV_ON 0
+#define PG_SCHED_DEV_ON 1
 
-#define TARGET_CMDLINE "/bin/ls"
+#define TARGET_CMDLINE "/home/daniel/appbench-master/graphchi/graphchi-cpp/bin/example_apps/pagerank"
 
 struct program_data {
     char * this_exe;
@@ -520,7 +520,7 @@ read_proc_cmdline (pid_t pid,
     }
     p[inbytes] = '\0';
 
-    /* printf("%d\n",strcmp(buf, target_name)); */
+    printf("pid %d: %s\n", pid , buf);
 
     return strcmp(buf, target_name) == 0;
 }
@@ -1035,7 +1035,7 @@ attach_to_pid_at_entry_point(struct program_data * data)
     }
 
     if (read_proc_cmdline(data->pid[0], TARGET_CMDLINE)){
-        puts("Hello");
+
 #if PG_SCHED_DEV_ON
         /*Debug*/
         /* dump_memory_map(data->pid[0]); */

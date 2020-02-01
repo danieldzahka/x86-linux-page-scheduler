@@ -135,6 +135,7 @@ static int
 init_tracked_process(struct tracked_process * this,
                      pid_t pid,
 		     int migration_enabled,
+                     int scans_to_be_idle,
                      unsigned long log_sec,
                      unsigned long log_nsec)
 {
@@ -143,7 +144,7 @@ init_tracked_process(struct tracked_process * this,
     
     this->pid = pid;
     this->migration_enabled = migration_enabled;
-    this->policy.scans_to_be_idle = 10;
+    this->policy.scans_to_be_idle = scans_to_be_idle;
     this->policy.period.sec  = log_sec;
     this->policy.period.nsec = log_nsec;
     this->release = tracked_process_release;
@@ -324,7 +325,10 @@ get_vma_desc_add_if_absent(struct tracked_process * this,
 
 static int
 allocate_tracker_and_add_to_list(pid_t pid,
-				 int migration_enabled)
+				 int migration_enabled,
+                                 int scans_to_be_idle,
+                                 unsigned long log_sec,
+                                 unsigned long log_nsec)
 {
     struct tracked_process * tracked_pid;
     int status;
@@ -334,8 +338,8 @@ allocate_tracker_and_add_to_list(pid_t pid,
         printk(KERN_ALERT "Could not allocate tracker struct\n");
         return -1;
     }
-    
-    status = init_tracked_process(tracked_pid, pid, migration_enabled, 0, 100000000);
+    status = init_tracked_process(tracked_pid, pid, migration_enabled,
+                                  scans_to_be_idle, log_sec, log_nsec);
     if (status){
         printk(KERN_ALERT "struct track process init failed\n");
         if (status == - 2) kref_put(&tracked_pid->refcount, tracked_pid->release);
@@ -451,7 +455,8 @@ pg_sched_ioctl(struct file * filp,
             }
             printk(KERN_INFO "tracking pid: %d\n", my_arg.pid);
 	    printk(KERN_INFO "Migration Enabled? %d\n", my_arg.enable_migration);
-            status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration);
+
+            status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration, my_arg.scans_to_be_idle, my_arg.log_sec, my_arg.log_nsec);
             if (status){
                 printk(KERN_ALERT "Error Allocating tracker\n");
                 break;

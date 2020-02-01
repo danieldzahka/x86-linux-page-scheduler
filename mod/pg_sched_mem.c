@@ -1,6 +1,8 @@
 #include <asm/pgalloc.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
+#include <asm/tlb.h>
+#include <asm/tlbflush.h>
 #include <linux/syscalls.h>
 #include <linux/hugetlb.h>
 #include <linux/kernel.h>
@@ -259,7 +261,7 @@ count_vmas(struct tracked_process * target_tracker)
     up_write(&(mm->mmap_sem));
 
     /* Flush just to see how bad it gets */
-    my_flush_tlb_mm_range(mm, 0UL, TLB_FLUSH_ALL, 0UL, true);
+    /* my_flush_tlb_mm_range(mm, 0UL, TLB_FLUSH_ALL, 0UL, true); */
 
     /*Drain the migration list*/
     /*Figure out how to put stuff back on the LRU if we can't move it */
@@ -270,8 +272,18 @@ count_vmas(struct tracked_process * target_tracker)
 	status = my_migrate_pages(&migration_list, pg_sched_alloc,
 				  NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
 
-	if (status > 0) printk(KERN_EMERG "Couldnt move %d pages\n", status);
-	if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");	
+        /* Need to insert call to putback_lru_pages here...*/
+        /* From kernel source: 
+         * The caller should call putback_movable_pages() to return pages to the LRU
+         * or free list only if ret != 0.
+         */
+
+        
+	if (status != 0) {
+            printk(KERN_EMERG "Couldnt move %d pages... putting back on lru\n", status);
+            //putback_movable_pages(&migration_list);
+        }
+	/* if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");	 */
     }
 
     /* Free Stale VMA_DESC */

@@ -28,11 +28,14 @@
 #define PG_SCHED_MODULE_NAME "pg_sched"
 #define PG_SCHED_DEVICE_PATH "/dev/" PG_SCHED_MODULE_NAME
 #define PG_SCHED_TMP_DIR      "/tmp/" PG_SCHED_MODULE_NAME "/"
-
+    
 /* IOCTL ARGS*/
 struct track_pid_arg {
     pid_t pid;
     int   enable_migration;
+    int   scans_to_be_idle;
+    unsigned long log_sec;
+    unsigned long log_nsec;
 };
 
 struct untrack_pid_arg {

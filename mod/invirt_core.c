@@ -27,8 +27,6 @@ struct invirt_hashlist * gbl_tg_hashtable;
 int invirt_debug = 0;
 module_param(invirt_debug, int, 0644);
 
-
-
 static int
 invirt_attach_target_tgid(struct invirt_thread_group * tg,
                           pid_t                        target_tgid)

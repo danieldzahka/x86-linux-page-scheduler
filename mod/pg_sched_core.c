@@ -335,7 +335,7 @@ allocate_tracker_and_add_to_list(pid_t pid,
         return -1;
     }
     
-    status = init_tracked_process(tracked_pid, pid, migration_enabled, 1, 0);
+    status = init_tracked_process(tracked_pid, pid, migration_enabled, 0, 100000000);
     if (status){
         printk(KERN_ALERT "struct track process init failed\n");
         if (status == - 2) kref_put(&tracked_pid->refcount, tracked_pid->release);
@@ -531,6 +531,14 @@ get_nonexported_symbols(void)
 
     my_migrate_pages = (fake_migrate_pages) sym;
 
+    sym = kallsyms_lookup_name("flush_tlb_mm_range");
+    if (sym == 0){
+	printk(KERN_ALERT "func not found!\n");
+	return -1;
+    }
+
+    my_flush_tlb_mm_range = (fake_flush_tlb_mm_range) sym;
+    
     return 0;
 }
 

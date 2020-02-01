@@ -63,6 +63,7 @@ struct page* pg_sched_alloc(struct page *page, unsigned long private)
 fake_isolate_lru_page my_isolate_lru_page = NULL;
 fake_vma_is_stack_for_current my_vma_is_stack_for_current = NULL;
 fake_migrate_pages my_migrate_pages = NULL;
+fake_flush_tlb_mm_range my_flush_tlb_mm_range = NULL;
 //consider looking up walk_vma here so ppl dont need to recompile the kernel
 
 //These should get added to the tracker object...
@@ -256,6 +257,9 @@ count_vmas(struct tracked_process * target_tracker)
 	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
     }
     up_write(&(mm->mmap_sem));
+
+    /* Flush just to see how bad it gets */
+    my_flush_tlb_mm_range(mm, 0UL, TLB_FLUSH_ALL, 0UL, true);
 
     /*Drain the migration list*/
     /*Figure out how to put stuff back on the LRU if we can't move it */

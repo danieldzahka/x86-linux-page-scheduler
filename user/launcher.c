@@ -23,7 +23,7 @@
 
 #define PG_SCHED_NULL_PID 0
 #define PG_SCHED_MAX_PROCS 100
-#define PG_SCHED_DEV_ON 1
+#define PG_SCHED_DEV_ON 0
 
 #define TARGET_CMDLINE "/home/daniel/appbench-master/graphchi/graphchi-cpp/bin/example_apps/pagerank"
 
@@ -32,14 +32,20 @@ struct program_data {
     int dev_fd;
     
     /* target data */
+    char * target_full_name;
     char * exe;
     pid_t pid[PG_SCHED_MAX_PROCS];
     pid_t managed_pid[PG_SCHED_MAX_PROCS];
     bool  tracker_freed[PG_SCHED_MAX_PROCS];
     int managed_pids_size;
     int max_proc_idx;
-    int enable_migration;
 
+    /*Page Scheduler Settings*/
+    int enable_migration;
+    int scans_to_be_idle;
+    unsigned long log_sec;
+    unsigned long log_nsec;
+    
     /* target argc/argv/envp */
     int argc;
     char ** argv;
@@ -398,6 +404,9 @@ pg_sched_track_pid(struct program_data * data,
     struct track_pid_arg arg = {
         .pid = data->pid[i],
 	.enable_migration = data->enable_migration,
+        .scans_to_be_idle = data->scans_to_be_idle,
+        .log_sec          = data->log_sec,
+        .log_nsec         = data->log_nsec,
     };
 
     data->managed_pid[data->managed_pids_size++] = data->pid[i];
@@ -586,7 +595,7 @@ handle_sigchld(int    fd,
                 }
 
                 if (ex_status>>8 == (SIGTRAP | (PTRACE_EVENT_EXEC<<8))) {
-                    if (read_proc_cmdline(p_data->pid[i], TARGET_CMDLINE)) {
+                    if (read_proc_cmdline(p_data->pid[i], p_data->target_full_name)) {
                         printf("Will Track pid: %d\n", p_data->pid[i]);
 #if PG_SCHED_DEV_ON
                         status = pg_sched_track_pid(p_data, p_data->max_proc_idx);
@@ -782,10 +791,14 @@ usage(FILE  * out_stream,
 {
     fprintf(out_stream, 
         "Usage: %s [OPTIONS] <exe> <arguments ...>\n"
-        "    -h (--help)        : print help and exit\n"
-        "    -x (--exclude-env) : do not inherit current environment in"
-                " target process\n"
-	"    -m (--enable-migration) : enable page migrations\n",
+        "    -h (--help)               : print help and exit\n"
+        "    -x (--exclude-env)        : do not inherit current environment in"
+	"    -m (--enable-migration)   : enable page migrations\n"
+	"    -t (--target-path)        : absolute path of application to manage\n"
+	"    -p (--periods-to-be-cold) : scans before classifying page cold\n"
+	"    -s (--scan-period-sec)    : whole second part of period\n"
+        "    -n (--scan-period-nsec)   : fractional piece of period (< 10e9)\n"
+            " application cmd\n",
         *argv
     );
     fflush(out_stream);
@@ -845,10 +858,14 @@ parse_cmd_line(int                   argc,
 
     struct option long_options[] =
         {
-         {"help",        no_argument,        0,  'h'},
-         {"exclude-env", no_argument,        0,  'x'},
-	 {"enable-migration", no_argument,   0,  'm'},
-         {0,             0,                  0,  0}
+         {"help",               no_argument,       0,  'h'},
+         {"exclude-env",        no_argument,       0,  'x'},
+	 {"enable-migration",   no_argument,       0,  'm'},
+         {"target-path",        required_argument, 0,  't'},
+         {"periods-to-be-cold", required_argument, 0,  'p'},
+         {"scan-period-sec",    required_argument, 0,  's'},
+         {"scan-period-nsec",   required_argument, 0,  'n'},
+         {0,                    0,                 0,   0}
         };
 
     opterr = 0; // quell error messages
@@ -876,6 +893,22 @@ parse_cmd_line(int                   argc,
             data->enable_migration = 1;
             break;
 
+        case 't':
+            data->target_full_name = optarg;
+            break;
+
+        case 'p':
+            data->scans_to_be_idle = atoi(optarg);
+            break;
+
+        case 's':
+            data->log_sec = strtoul(optarg, NULL, 10);
+            break;
+
+        case 'n':
+            data->log_nsec = strtoul(optarg, NULL, 10);
+            break;
+            
         case '?':
         default:
             fprintf(stderr, "Error: invalid command line option\n");
@@ -884,13 +917,18 @@ parse_cmd_line(int                   argc,
         }
     }
 
+    //debug dump argz...
+    /* printf("log_sec=%lu\n",         data->log_sec); */
+    /* printf("log_nsec=%lu\n",        data->log_nsec); */
+    /* printf("scans_to_be_idle=%d\n", data->scans_to_be_idle); */
+    /* printf("target_full_name=%s\n", data->target_full_name); */
+    
     /* optind is the location in argv of the first non-option argument */
     opt_off = optind;
     if ((argc - opt_off) < 1) {
         usage(stderr, argv);
         return -1;
     }
-
 
     /* setup argc/argv/envp */
     {
@@ -1034,7 +1072,7 @@ attach_to_pid_at_entry_point(struct program_data * data)
         return status;
     }
 
-    if (read_proc_cmdline(data->pid[0], TARGET_CMDLINE)){
+    if (read_proc_cmdline(data->pid[0], data->target_full_name)){
 
 #if PG_SCHED_DEV_ON
         /*Debug*/

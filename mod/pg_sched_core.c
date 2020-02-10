@@ -518,7 +518,7 @@ get_nonexported_symbols(void)
     /* Grab non-exported funtion symbols */
     sym = kallsyms_lookup_name("vma_is_stack_for_current");
     if (sym == 0){
-	printk(KERN_ALERT "func not found!\n");
+	printk(KERN_ALERT "Symbol: vma_is_stack_for_current not found!\n");
 	return -1;
     }
 
@@ -526,7 +526,7 @@ get_nonexported_symbols(void)
 
     sym = kallsyms_lookup_name("isolate_lru_page");
     if (sym == 0){
-	printk(KERN_ALERT "func not found!\n");
+	printk(KERN_ALERT "Symbol: isolate_lru_page not found!\n");
 	return -1;
     }
 
@@ -534,7 +534,7 @@ get_nonexported_symbols(void)
 
     sym = kallsyms_lookup_name("migrate_pages");
     if (sym == 0){
-	printk(KERN_ALERT "func not found!\n");
+	printk(KERN_ALERT "Symbol: migrate_pages not found!\n");
 	return -1;
     }
 
@@ -542,12 +542,20 @@ get_nonexported_symbols(void)
 
     sym = kallsyms_lookup_name("flush_tlb_mm_range");
     if (sym == 0){
-	printk(KERN_ALERT "func not found!\n");
+	printk(KERN_ALERT "Symbol: flush_tlb_mm_range not found!\n");
 	return -1;
     }
 
     my_flush_tlb_mm_range = (fake_flush_tlb_mm_range) sym;
-    
+
+    sym = kallsyms_lookup_name("walk_page_vma");
+    if (sym == 0){
+	printk(KERN_ALERT "Symbol: walk_page_vma not found!\n");
+	return -1;
+    }
+
+    my_walk_page_vma = (fake_walk_page_vma) sym;
+
     return 0;
 }
 

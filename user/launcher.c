@@ -23,7 +23,7 @@
 
 #define PG_SCHED_NULL_PID 0
 #define PG_SCHED_MAX_PROCS 100
-#define PG_SCHED_DEV_ON 0
+#define PG_SCHED_DEV_ON 1
 
 #define TARGET_CMDLINE "/home/daniel/appbench-master/graphchi/graphchi-cpp/bin/example_apps/pagerank"
 

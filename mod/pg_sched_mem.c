@@ -66,6 +66,7 @@ fake_isolate_lru_page my_isolate_lru_page = NULL;
 fake_vma_is_stack_for_current my_vma_is_stack_for_current = NULL;
 fake_migrate_pages my_migrate_pages = NULL;
 fake_flush_tlb_mm_range my_flush_tlb_mm_range = NULL;
+fake_walk_page_vma my_walk_page_vma = NULL;
 //consider looking up walk_vma here so ppl dont need to recompile the kernel
 
 //These should get added to the tracker object...
@@ -255,7 +256,7 @@ count_vmas(struct tracked_process * target_tracker)
 	
 	pg_walk_data.vma_desc->touched = 1;
 	
-	status = walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
+	status = my_walk_page_vma(vma, &pg_sched_walk_ops, &pg_walk_data);
 	if (status) printk(KERN_ALERT "PAGE WALK BAD\n");
     }
     up_write(&(mm->mmap_sem));

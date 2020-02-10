@@ -453,8 +453,12 @@ pg_sched_ioctl(struct file * filp,
                 status = -1;
                 break;
             }
+            
             printk(KERN_INFO "tracking pid: %d\n", my_arg.pid);
 	    printk(KERN_INFO "Migration Enabled? %d\n", my_arg.enable_migration);
+            printk(KERN_INFO "Scans to be idle %d\n", my_arg.scans_to_be_idle);
+            printk(KERN_INFO "log sec? %lu\n", my_arg.log_sec);
+            printk(KERN_INFO "log nsec? %lu\n", my_arg.log_nsec);
 
             status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration, my_arg.scans_to_be_idle, my_arg.log_sec, my_arg.log_nsec);
             if (status){

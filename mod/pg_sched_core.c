@@ -40,6 +40,7 @@ expiration_func(struct hrtimer * tim)
 static void
 free_vma_desc(struct vma_desc * desc)
 {
+    /* printk("DEALLLOC\n"); */
     /* if (desc->alloc_method == KMALLOC){ */
     /*     kfree(desc->page_accesses); */
     /* } else if (desc->alloc_method == VMALLOC) { */
@@ -148,6 +149,7 @@ init_tracked_process(struct tracked_process * this,
     this->policy.period.sec  = log_sec;
     this->policy.period.nsec = log_nsec;
     this->release = tracked_process_release;
+    this->slow_pages = 0;
 
     /*HR Timer config*/
     this->scanner_thread_struct.kt = ktime_set(log_sec, log_nsec);
@@ -266,10 +268,11 @@ allocate_track_vma(struct tracked_process * this,
     /*     (*res)->alloc_method = KMALLOC; */
     /* } */
 
-    if ( (vma->vm_start > vma->vm_end) || ((*res)->num_pages > 250000) ){
+    if ( (vma->vm_start > vma->vm_end) || ((*res)->num_pages > 400000) ){
         printk(KERN_ALERT "%lx - %lx , pages? %lu", vma->vm_start, vma->vm_end, (*res)->num_pages);
     } else {
         /* Grant Allocation */
+	/* printk(KERN_INFO "Granting Alloc\n"); */
         (*res)->page_accesses = kvcalloc((*res)->num_pages, sizeof (struct page_desc), GFP_KERNEL);
     }
 
@@ -555,6 +558,16 @@ get_nonexported_symbols(void)
     }
 
     my_walk_page_vma = (fake_walk_page_vma) sym;
+
+    #if PG_SCHED_FIRST_TOUCH
+    sym = kallsyms_lookup_name("mpol_rebind_mm");
+    if (sym == 0){
+	printk(KERN_ALERT "Symbol: mpol_rebind_mm not found!\n");
+	return -1;
+    }
+    #endif
+    
+    my_mpol_rebind_mm = (fake_mpol_rebind_mm) sym;
 
     return 0;
 }

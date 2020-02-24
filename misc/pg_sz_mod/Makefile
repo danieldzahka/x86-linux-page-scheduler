@@ -1,4 +1,4 @@
-LINUX_KERN   ?= /home/dzahka3/thermo-kernel/thermostat_asplos_2017-release_v1
+LINUX_KERN   ?= /home/dzahka3/experimental/linux-5.4.18
 EXTRA_CFLAGS += -DMODULE=1 -D__KERNEL__=1
 
 obj-m := pg_size.o

@@ -25,7 +25,7 @@
 #define PG_SCHED_MAX_PROCS 100
 #define PG_SCHED_DEV_ON 1
 
-#define TARGET_CMDLINE "/home/daniel/appbench-master/graphchi/graphchi-cpp/bin/example_apps/pagerank"
+/* #define TARGET_CMDLINE "/home/daniel/appbench-master/graphchi/graphchi-cpp/bin/example_apps/pagerank" */
 
 struct program_data {
     char * this_exe;

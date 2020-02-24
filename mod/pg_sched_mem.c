@@ -14,6 +14,8 @@
 #include <linux/sched.h>
 #include <linux/page_ref.h>
 #include <linux/gfp.h>
+#include <linux/random.h>
+#include <linux/nodemask.h>
 
 #include <pg_sched_mem.h>
 #include <pg_sched_priv.h>
@@ -43,10 +45,13 @@ struct pg_walk_data
     int user_pages_4MB;
     int n0;
     int n1;
+    int n2;
     struct list_head * list;
     int list_size;
     struct vma_desc * vma_desc;
     int migration_enabled;
+    int threshold;
+    int slow_pages;
 };
 
 struct page* pg_sched_alloc(struct page *page, unsigned long private)
@@ -57,7 +62,7 @@ struct page* pg_sched_alloc(struct page *page, unsigned long private)
     unsigned int order = 0;
     pg_data_t *pgdat;
     pgdat = page_pgdat(page);
-    target_node = !pgdat->node_id;
+    target_node = 0; /* !pgdat->node_id; */
     return alloc_pages_node(target_node, gfp_mask, order);
 }
 
@@ -67,12 +72,14 @@ fake_vma_is_stack_for_current my_vma_is_stack_for_current = NULL;
 fake_migrate_pages my_migrate_pages = NULL;
 fake_flush_tlb_mm_range my_flush_tlb_mm_range = NULL;
 fake_walk_page_vma my_walk_page_vma = NULL;
+fake_mpol_rebind_mm my_mpol_rebind_mm = NULL;
 //consider looking up walk_vma here so ppl dont need to recompile the kernel
 
 //These should get added to the tracker object...
 
-static int threshold = 10;
-static int max_pages = 1000;
+/* static int threshold = 10; */
+static int max_pages = 2000;
+static int period = 0;
 
 /* TO DO: Inform tracker if VMA is largely unevictable... */
 static int
@@ -101,59 +108,63 @@ pte_callback(pte_t *pte,
       4) add to list by linkage on lru field?
       call migrate_pages -> This should do the rest?
      */
-    PRINT_IF_NULL(migration_list, 0);
+    /* PRINT_IF_NULL(migration_list, 0); */
 
     /* Holy Shit */
     page = pte_page(*pte);
-    PRINT_IF_NULL(page, 1);
+    /* PRINT_IF_NULL(page, 1); */
     /* printk(KERN_INFO "refcount on the page is %d\n", page_count(page)); */
     pgdat = page_pgdat(page);
-    PRINT_IF_NULL(pgdat, 2);
+    /* PRINT_IF_NULL(pgdat, 2); */
     if (pgdat->node_id == 0)
     	++walk_data->n0;
-    else
+    else if (pgdat->node_id == 1)
     	++walk_data->n1;
+    else
+	++walk_data->n2;
 
-    if (walk_data->migration_enabled == 0) {
-	return 0;
-    }
-    /* printk(KERN_INFO "NUMA NODE %d\n", pgdat->node_id); */
-    /* { */
-    /* 	int is_lru; */
-    /* 	is_lru = PageLRU(page); */
-    /* 	printk(KERN_INFO "is lru? : %d\n", is_lru); */
+    /* if (walk_data->migration_enabled == 0) { */
+    /* 	return 0; */
     /* } */
 
     should_move = 0;
-    pg_off = (addr - walk_data->vma_desc->vm_start) >> 12;
-    PRINT_IF_NULL(walk_data, 3);
-    PRINT_IF_NULL(walk_data->vma_desc, 4);
-    PRINT_IF_NULL(walk_data->vma_desc->page_accesses, 5);
-    if (pg_off >= walk_data->vma_desc->num_pages){
-	printk(KERN_EMERG "OUT OF RANGE\n");
-	return 0;
-    }
-    //Beware of resized VMAS -> do index check here make sure at least as big/bigger
-    /* walk_data->vma_desc->page_accesses[pg_off].node = pgdat->node_id; */
-    if (pte_young(*pte)){
-    	*pte = pte_mkold(*pte);//mkold
-	walk_data->vma_desc->page_accesses[pg_off].age = 0;
-	/* walk_data->vma_desc->page_accesses[pg_off].accesses++; */
-	if (pgdat->node_id == 1){
-	    should_move = 1; //fault back in
-	}
-    } else {
-        /*Update Age*/
-        if (walk_data->vma_desc->page_accesses[pg_off].age < 250)
-            walk_data->vma_desc->page_accesses[pg_off].age++;
+    /* pg_off = (addr - walk_data->vma_desc->vm_start) >> 12; */
+    /* /\* PRINT_IF_NULL(walk_data, 3); *\/ */
+    /* /\* PRINT_IF_NULL(walk_data->vma_desc, 4); *\/ */
+    /* /\* PRINT_IF_NULL(walk_data->vma_desc->page_accesses, 5); *\/ */
+    /* if (pg_off >= walk_data->vma_desc->num_pages){ */
+    /* 	printk(KERN_EMERG "OUT OF RANGE\n"); */
+    /* 	return 0; */
+    /* } */
+    /* //Beware of resized VMAS -> do index check here make sure at least as big/bigger */
+    /* /\* walk_data->vma_desc->page_accesses[pg_off].node = pgdat->node_id; *\/ */
+    /* if (pte_young(*pte)){ */
+    /* 	*pte = pte_mkold(*pte);//mkold */
+    /* 	walk_data->vma_desc->page_accesses[pg_off].age = 0; */
+    /* 	/\* walk_data->vma_desc->page_accesses[pg_off].accesses++; *\/ */
+    /* 	if (pgdat->node_id == 1){ */
+    /* 	    should_move = 1; //fault back in */
+    /* 	} */
+    /* } else { */
+    /*     /\*Update Age*\/ */
+    /*     if (walk_data->vma_desc->page_accesses[pg_off].age < 250) */
+    /*         walk_data->vma_desc->page_accesses[pg_off].age++; */
         
-	if (walk_data->vma_desc->page_accesses[pg_off].age > threshold){
+    /* 	if (walk_data->vma_desc->page_accesses[pg_off].age > walk_data->threshold){ */
+    /* 	    should_move = 1; */
+    /* 	} */
+    /* } */
+
+    if (pgdat->node_id == 2 && period > 40){
+	int r = get_random_int();
+	r &= ~(1 << 31);
+	if (r % walk_data->slow_pages <= max_pages){
 	    should_move = 1;
 	}
     }
     
     if (walk_data->migration_enabled && PageLRU(page) && walk_data->list_size < max_pages &&
-    	!PageUnevictable(page) && should_move && pgdat->node_id == 0){
+    	!PageUnevictable(page) && should_move /* && pgdat->node_id == 2 */){
     	/*Try to add page to list */
     	/* 2) */
     	status = my_isolate_lru_page(page);
@@ -221,8 +232,9 @@ count_vmas(struct tracked_process * target_tracker)
 	    .list_size         = 0,
 	    .vma_desc          = NULL,
 	    .migration_enabled = target_tracker->migration_enabled,
+	    .threshold         = target_tracker->policy.scans_to_be_idle,
+	    .slow_pages        = target_tracker->slow_pages == 0 ? 1 : target_tracker->slow_pages,
 	};
-
 
     struct mm_walk_ops
 	pg_sched_walk_ops =
@@ -233,7 +245,8 @@ count_vmas(struct tracked_process * target_tracker)
 
     mm = target_tracker->mm;
 
-    printk(KERN_ALERT "A\n");
+    ++period;
+    /* printk(KERN_ALERT "A\n"); */
     
     down_write(&(mm->mmap_sem));
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
@@ -269,7 +282,7 @@ count_vmas(struct tracked_process * target_tracker)
     /*Unless of course, migrate_pages does this already */
 
     if (target_tracker->migration_enabled && pg_walk_data.list_size){
-	printk(KERN_EMERG "Attempting to migrate page\n");
+	/* printk(KERN_EMERG "Attempting to migrate page\n"); */
 	status = my_migrate_pages(&migration_list, pg_sched_alloc,
 				  NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
 
@@ -290,7 +303,26 @@ count_vmas(struct tracked_process * target_tracker)
     /* Free Stale VMA_DESC */
     free_unctouched_vmas(target_tracker);
 
-    printk(KERN_ALERT "B\n");
+    target_tracker->slow_pages = pg_walk_data.n2;
+    
+    /* printk(KERN_ALERT "B\n"); */
     /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
-    printk(KERN_INFO "node 0: %d ... node 1: %d\n", pg_walk_data.n0, pg_walk_data.n1);
+    printk(KERN_INFO "node 0: %d ... node 1: %d ... node 2: %d ... migrations: %d\n",
+	   pg_walk_data.n0, pg_walk_data.n1, pg_walk_data.n2, pg_walk_data.list_size);
+
+    #if PG_SCHED_FIRST_TOUCH
+    {
+    static int a;
+    a = 1;
+    if (a && pg_walk_data.n0 > 10000){
+	nodemask_t mask;
+	mask = nodemask_of_node(2);
+	my_mpol_rebind_mm(mm, &mask);
+	target_tracker->policy.period.sec  = 1; /* Change period */
+	target_tracker->policy.period.nsec = 0;
+	a = 0;
+	printk(KERN_INFO "CHANGING\n");
+    }
+    }
+    #endif
 }

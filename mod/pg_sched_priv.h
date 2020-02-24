@@ -57,6 +57,8 @@ struct tracked_process {
         struct hrtimer timer;
         struct task_struct* scanner_thread;
     } scanner_thread_struct;
+
+    int slow_pages;
     
     void (*release) (struct kref * refc);
 };

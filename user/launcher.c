@@ -42,7 +42,9 @@ struct program_data {
 
     /*Page Scheduler Settings*/
     int enable_migration;
-    int scans_to_be_idle;
+    enum hotness_policy pol;
+    int alpha;
+    int theta;
     unsigned long log_sec;
     unsigned long log_nsec;
     
@@ -404,7 +406,9 @@ pg_sched_track_pid(struct program_data * data,
     struct track_pid_arg arg = {
         .pid = data->pid[i],
 	.enable_migration = data->enable_migration,
-        .scans_to_be_idle = data->scans_to_be_idle,
+	.pol              = data->pol,
+	.alpha            = data->alpha,
+        .theta            = data->theta,
         .log_sec          = data->log_sec,
         .log_nsec         = data->log_nsec,
     };
@@ -846,6 +850,32 @@ setup_env(struct program_data * data,
     data->envp = new_envp;
     return 0;
 }
+static enum hotness_policy
+int_to_policy (int p)
+{
+    #define age_threshold 0
+    #define ema 1
+    #define hamming_weight 2
+    
+    switch (p){
+    case age_threshold:
+	return AGE_THRESHOLD;
+	break;
+    case ema:
+	return EMA;
+	break;
+    case hamming_weight:
+	return HAMMING_WEIGHT;
+	break;
+    default:
+	return NONE;
+	break;
+    }
+
+    #undef age_threshold
+    #undef ema
+    #undef hamming_weight
+} 
 
 static int
 parse_cmd_line(int                   argc,
@@ -862,7 +892,9 @@ parse_cmd_line(int                   argc,
          {"exclude-env",        no_argument,       0,  'x'},
 	 {"enable-migration",   no_argument,       0,  'm'},
          {"target-path",        required_argument, 0,  't'},
-         {"periods-to-be-cold", required_argument, 0,  'p'},
+	 {"policy",             required_argument, 0,  'p'},
+	 {"alpha",              required_argument, 0,  'a'},
+         {"theta",              required_argument, 0,  'o'},
          {"scan-period-sec",    required_argument, 0,  's'},
          {"scan-period-nsec",   required_argument, 0,  'n'},
          {0,                    0,                 0,   0}
@@ -893,12 +925,20 @@ parse_cmd_line(int                   argc,
             data->enable_migration = 1;
             break;
 
+	case 'p':
+            data->pol = int_to_policy(atoi(optarg));
+            break;
+	    
         case 't':
             data->target_full_name = optarg;
             break;
 
-        case 'p':
-            data->scans_to_be_idle = atoi(optarg);
+        case 'a':
+            data->alpha = atoi(optarg);
+            break;
+	    
+        case 'o':
+            data->theta = atoi(optarg);
             break;
 
         case 's':

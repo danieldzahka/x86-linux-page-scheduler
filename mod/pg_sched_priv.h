@@ -3,30 +3,26 @@
 //probably need to include some headers for stlye
 //but putting below all includes should work nonetheless
 
-struct initial_vma {
-    struct vm_area_struct * vma;
-    struct list_head linkage;
-};
+/* struct initial_vma { */
+/*     struct vm_area_struct * vma; */
+/*     struct list_head linkage; */
+/* }; */
 
-struct page_desc {
-    char age;
-    /* int accesses; */
-    /* int node; */
-};
-
-/* enum desc_alloc_method { */
-/*     KMALLOC, */
-/*     VMALLOC, */
+/* struct page_desc { */
+/*     char age; */
+/*     /\* int accesses; *\/ */
+/*     /\* int node; *\/ */
 /* }; */
 
 struct vma_desc {
     struct vm_area_struct * vma; /*Use as key*/
     unsigned long           vm_start;
     unsigned long           vm_end;
-    struct page_desc *      page_accesses;
+    /* struct page_desc *      page_accesses; */
     unsigned long           num_pages;
     int                     touched;
     /* enum desc_alloc_method  alloc_method; */
+    unsigned long key;
     
     struct list_head linkage; /* struct tracked_process -> vma_list */
 };
@@ -35,11 +31,15 @@ struct tracked_process {
     pid_t pid;
     int migration_enabled;
     struct {
-        int scans_to_be_idle;
         struct {
             unsigned long sec;
             unsigned long nsec;
         } period;
+
+	int alpha; /* out of 1024 */
+	/* int alpha_d; */
+	int theta; /* Threshold */
+	enum hotness_policy class;
     } policy;
 
     struct mm_struct * mm;
@@ -50,7 +50,7 @@ struct tracked_process {
     struct list_head vma_desc_list; /* VMA's that we are watching */
     /* int vma_desc_list_length; /\* For debugging merged or disappearing vma's *\/ */
 
-    struct list_head initial_vma_list; /*.so's and other stuff I dont want to touch*/
+    /* struct list_head initial_vma_list; /\*.so's and other stuff I dont want to touch*\/ */
     
     struct scanner_params {
         ktime_t kt;
@@ -59,6 +59,7 @@ struct tracked_process {
     } scanner_thread_struct;
 
     int slow_pages;
+    unsigned long key;
     
     void (*release) (struct kref * refc);
 };
@@ -70,4 +71,6 @@ get_vma_desc_add_if_absent(struct tracked_process * this,
                            struct vm_area_struct * vma,
                            struct vma_desc ** res);
 
+extern int hist_size;
+extern int pg_max;
 #endif /* __PG_SCHED_PRIV_H__ */

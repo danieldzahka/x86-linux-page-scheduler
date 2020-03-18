@@ -11,6 +11,7 @@
 #include <linux/pid.h>
 #include <linux/hrtimer.h>
 #include <linux/sched.h>
+#include <linux/random.h>
 
 #include <linux/sched/mm.h>
 
@@ -48,7 +49,7 @@ free_vma_desc(struct vma_desc * desc)
     /* } else { */
     /*     printk(KERN_ALERT "FREEING MEMORY not V/K malloc\n"); */
     /* } */
-    kvfree(desc->page_accesses);
+    /* kvfree(desc->page_accesses); */
     kfree(desc);
 }
 
@@ -64,17 +65,17 @@ free_vma_desc_list(struct list_head * list)
     }    
 }
 
-static void
-free_inital_vma_list(struct list_head * list)
-{
-    struct initial_vma * p;
+/* static void */
+/* free_inital_vma_list(struct list_head * list) */
+/* { */
+/*     struct initial_vma * p; */
     
-    while (!list_empty(list)){
-        p = list_first_entry(list, struct initial_vma, linkage);
-        list_del(&p->linkage);
-        kfree(p);
-    }    
-}
+/*     while (!list_empty(list)){ */
+/*         p = list_first_entry(list, struct initial_vma, linkage); */
+/*         list_del(&p->linkage); */
+/*         kfree(p); */
+/*     }     */
+/* } */
 
 /*Do something, sleep. Rinse and repeat */
 int
@@ -118,7 +119,7 @@ tracked_process_destructor(struct tracked_process * this)
     printk(KERN_INFO "Destructor called for pid %d\n", this->pid);
     
     free_vma_desc_list(&this->vma_desc_list);
-    free_inital_vma_list(&this->initial_vma_list);
+    /* free_inital_vma_list(&this->initial_vma_list); */
     mmdrop(this->mm);// -1 for release
     kfree(this);
 }
@@ -136,7 +137,9 @@ static int
 init_tracked_process(struct tracked_process * this,
                      pid_t pid,
 		     int migration_enabled,
-                     int scans_to_be_idle,
+		     enum hotness_policy pol,
+		     int alpha,
+                     int theta,
                      unsigned long log_sec,
                      unsigned long log_nsec)
 {
@@ -145,11 +148,14 @@ init_tracked_process(struct tracked_process * this,
     
     this->pid = pid;
     this->migration_enabled = migration_enabled;
-    this->policy.scans_to_be_idle = scans_to_be_idle;
+    this->policy.class      = pol;
+    this->policy.alpha      = alpha;
+    this->policy.theta      = theta;
     this->policy.period.sec  = log_sec;
     this->policy.period.nsec = log_nsec;
     this->release = tracked_process_release;
     this->slow_pages = 0;
+    this->key = get_random_int();
 
     /*HR Timer config*/
     this->scanner_thread_struct.kt = ktime_set(log_sec, log_nsec);
@@ -179,31 +185,31 @@ init_tracked_process(struct tracked_process * this,
     INIT_LIST_HEAD(&this->vma_desc_list);
     /* this->vma_desc_list_length = 0; */
 
-    INIT_LIST_HEAD(&this->initial_vma_list);
-    {
-        struct vm_area_struct *vma;
-        struct initial_vma * init_vma;
+    /* INIT_LIST_HEAD(&this->initial_vma_list); */
+    /* { */
+    /*     struct vm_area_struct *vma; */
+    /*     struct initial_vma * init_vma; */
 
-        down_write(&(this->mm->mmap_sem));
-        for (vma = this->mm->mmap; vma != NULL; vma = vma->vm_next){
-            if (!vma_is_anonymous(vma) /*Only interested in Anon*/ ||
-                /* my_vma_is_stack_for_current(vma) /\*Don't count the stack*\/ || */
-                (vma->vm_flags & VM_EXEC) ||
-                (vma->vm_flags & VM_SPECIAL) /* VDSO? Maybe other junk? */)
-                continue; 
+    /*     down_write(&(this->mm->mmap_sem)); */
+    /*     for (vma = this->mm->mmap; vma != NULL; vma = vma->vm_next){ */
+    /*         if (!vma_is_anonymous(vma) /\*Only interested in Anon*\/ || */
+    /*             /\* my_vma_is_stack_for_current(vma) /\\*Don't count the stack*\\/ || *\/ */
+    /*             (vma->vm_flags & VM_EXEC) || */
+    /*             (vma->vm_flags & VM_SPECIAL) /\* VDSO? Maybe other junk? *\/) */
+    /*             continue;  */
 
-            init_vma = kzalloc(sizeof(struct initial_vma), GFP_KERNEL);
-            if (!init_vma){
-                printk(KERN_EMERG "Couldnt allocate init vma\n");
-                up_write(&(this->mm->mmap_sem));
-                return -2;
-            }
+    /*         init_vma = kzalloc(sizeof(struct initial_vma), GFP_KERNEL); */
+    /*         if (!init_vma){ */
+    /*             printk(KERN_EMERG "Couldnt allocate init vma\n"); */
+    /*             up_write(&(this->mm->mmap_sem)); */
+    /*             return -2; */
+    /*         } */
 	    
-	    init_vma->vma = vma;
-            list_add(&init_vma->linkage, &this->initial_vma_list);
-        }
-        up_write(&(this->mm->mmap_sem));
-    }
+    /* 	    init_vma->vma = vma; */
+    /*         list_add(&init_vma->linkage, &this->initial_vma_list); */
+    /*     } */
+    /*     up_write(&(this->mm->mmap_sem)); */
+    /* } */
         
     /* Launch Thread from Here? */
     this->scanner_thread_struct.scanner_thread = kthread_run(scanner_func, this, "pg_sched_scanner");
@@ -251,9 +257,10 @@ allocate_track_vma(struct tracked_process * this,
     (*res)->vma           = vma;
     (*res)->vm_start      = vma->vm_start;
     (*res)->vm_end        = vma->vm_end;
-    (*res)->page_accesses = NULL;
+    /* (*res)->page_accesses = NULL; */
     (*res)->num_pages     = (vma->vm_end - vma->vm_start) & ((1<<12) - 1) ?
-	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;;
+	((vma->vm_end - vma->vm_start) >> 12) + 1 : (vma->vm_end - vma->vm_start) >> 12;
+    (*res)->num_pages     = get_random_int();
     INIT_LIST_HEAD(&(*res)->linkage);
 
     /* if ((*res)->num_pages <= 0) printk(KERN_EMERG "num_pages == 0\n"); */
@@ -268,15 +275,15 @@ allocate_track_vma(struct tracked_process * this,
     /*     (*res)->alloc_method = KMALLOC; */
     /* } */
 
-    if ( (vma->vm_start > vma->vm_end) || ((*res)->num_pages > 400000) ){
-        printk(KERN_ALERT "%lx - %lx , pages? %lu", vma->vm_start, vma->vm_end, (*res)->num_pages);
-    } else {
-        /* Grant Allocation */
-	/* printk(KERN_INFO "Granting Alloc\n"); */
-        (*res)->page_accesses = kvcalloc((*res)->num_pages, sizeof (struct page_desc), GFP_KERNEL);
-    }
+    /* if ( (vma->vm_start > vma->vm_end) || ((*res)->num_pages > 400000) ){ */
+    /*     printk(KERN_ALERT "%lx - %lx , pages? %lu", vma->vm_start, vma->vm_end, (*res)->num_pages); */
+    /* } else { */
+    /*     /\* Grant Allocation *\/ */
+    /* 	/\* printk(KERN_INFO "Granting Alloc\n"); *\/ */
+    /*     /\* (*res)->page_accesses = kvcalloc((*res)->num_pages, sizeof (struct page_desc), GFP_KERNEL); *\/ */
+    /* } */
 
-    if (!(*res)->page_accesses){
+    if ( 0 /* !(*res)->page_accesses */){
 	printk(KERN_EMERG "Error Allocating page access vector\n");
 	kfree(*res);
 	return -1;
@@ -329,7 +336,9 @@ get_vma_desc_add_if_absent(struct tracked_process * this,
 static int
 allocate_tracker_and_add_to_list(pid_t pid,
 				 int migration_enabled,
-                                 int scans_to_be_idle,
+				 enum hotness_policy pol,
+				 int alpha,
+				 int theta,
                                  unsigned long log_sec,
                                  unsigned long log_nsec)
 {
@@ -342,7 +351,7 @@ allocate_tracker_and_add_to_list(pid_t pid,
         return -1;
     }
     status = init_tracked_process(tracked_pid, pid, migration_enabled,
-                                  scans_to_be_idle, log_sec, log_nsec);
+                                  pol, alpha, theta, log_sec, log_nsec);
     if (status){
         printk(KERN_ALERT "struct track process init failed\n");
         if (status == - 2) kref_put(&tracked_pid->refcount, tracked_pid->release);
@@ -378,6 +387,7 @@ remove_tracker_from_list(pid_t pid)
     } 
 }
 
+int * hist;
 /* seq_file stuff */
 static int
 print_page_access_data(struct seq_file * m)
@@ -398,6 +408,11 @@ print_page_access_data(struct seq_file * m)
     /*         } */
     /*     } */
     /* } */
+    int i;
+    seq_printf(m, "x,count\n");
+    for (i = 0; i < hist_size; ++i){
+	seq_printf(m, "%d,%d\n", i, hist[i]);
+    }
     return 0;
 }
 
@@ -430,6 +445,28 @@ pg_sched_release(struct inode * inodep,
     return 0;
 }
 
+
+static void
+printk_hotness_policy(enum hotness_policy pol)
+{
+        switch (pol){
+    case AGE_THRESHOLD:
+	printk("policy: AGE_THRESHOLD\n");
+	break;
+    case EMA:
+	printk("policy: EMA\n");
+	break;
+    case HAMMING_WEIGHT:
+	printk("policy: HAMMING_WEIGHT\n");
+	break;
+    case NONE:
+	break;
+    default:
+	break;
+    }
+
+}
+
 static long
 pg_sched_ioctl(struct file * filp,
 	       unsigned int  cmd,
@@ -459,11 +496,14 @@ pg_sched_ioctl(struct file * filp,
             
             printk(KERN_INFO "tracking pid: %d\n", my_arg.pid);
 	    printk(KERN_INFO "Migration Enabled? %d\n", my_arg.enable_migration);
-            printk(KERN_INFO "Scans to be idle %d\n", my_arg.scans_to_be_idle);
+            printk(KERN_INFO "alpha %d\n", my_arg.alpha);
+            printk(KERN_INFO "theta %d\n", my_arg.theta);
             printk(KERN_INFO "log sec? %lu\n", my_arg.log_sec);
             printk(KERN_INFO "log nsec? %lu\n", my_arg.log_nsec);
+	    printk_hotness_policy(my_arg.pol);
 
-            status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration, my_arg.scans_to_be_idle, my_arg.log_sec, my_arg.log_nsec);
+            status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration, my_arg.pol, my_arg.alpha,
+						      my_arg.theta, my_arg.log_sec, my_arg.log_nsec);
             if (status){
                 printk(KERN_ALERT "Error Allocating tracker\n");
                 break;
@@ -573,6 +613,8 @@ get_nonexported_symbols(void)
 }
 
 static struct proc_dir_entry * entry;
+int hist_size = 8192;
+int pg_max    = 0;
 
 static int __init 
 pg_sched_init(void)
@@ -591,7 +633,8 @@ pg_sched_init(void)
     }
 
     entry = proc_create("pg_sched_data", 0, NULL, &pg_sched_data_fops);
-
+    hist  = kzalloc(sizeof(int) * hist_size, GFP_KERNEL); 
+    
     printk(KERN_INFO "Initialized page_scheduler module\n");
 
     return 0;
@@ -600,7 +643,8 @@ pg_sched_init(void)
 static void __exit
 pg_sched_exit(void ) 
 {
-    /* free_page_access_arrays(); //remove later */
+    kfree(hist);
+    printk("max %d\n", pg_max);
     misc_deregister(&dev_handle);
     remove_proc_entry("pg_sched_data",NULL);
     printk(KERN_INFO "Unloaded page_scheduler module\n");

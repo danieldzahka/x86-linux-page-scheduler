@@ -28,14 +28,18 @@
 #define PG_SCHED_MODULE_NAME "pg_sched"
 #define PG_SCHED_DEVICE_PATH "/dev/" PG_SCHED_MODULE_NAME
 #define PG_SCHED_TMP_DIR      "/tmp/" PG_SCHED_MODULE_NAME "/"
+
+enum hotness_policy {AGE_THRESHOLD, EMA, HAMMING_WEIGHT, NONE};
     
 /* IOCTL ARGS*/
 struct track_pid_arg {
     pid_t pid;
     int   enable_migration;
-    int   scans_to_be_idle;
+    int   alpha; /* out of 1024 */
+    int   theta;
     unsigned long log_sec;
     unsigned long log_nsec;
+    enum hotness_policy pol;
 };
 
 struct untrack_pid_arg {

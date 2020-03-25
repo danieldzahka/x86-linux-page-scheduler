@@ -56,6 +56,7 @@ struct pg_walk_data
     struct tracked_process * tracked_pid;
     int priv_count1;
     int priv_count2;
+    int huge;
 };
 
 /* Fast Node Pool [0,1], but I only use 1 for now*/
@@ -63,13 +64,13 @@ struct page* pg_sched_alloc_fast(struct page *page, unsigned long private)
 {
     struct page * new  = NULL;
     int target_node    = 0; /* Unhardcode later */
-    gfp_t gfp_mask     = GFP_KERNEL; /*CHANGE TO GFP_USER*/
+    gfp_t gfp_mask     = GFP_USER; /*CHANGE TO GFP_USER*/
     unsigned int order = 0;
     
     new = alloc_pages_node(target_node, gfp_mask, order);
     /* Patch page-hotness metadata */
-    new->pg_word1 = 0; /* Reset random key */
-    new->pg_word2 = 0; /* Reset page age*/
+    new->pg_word1 = page->pg_word1; /* Reset random key */
+    new->pg_word2 = page->pg_word2; /* Reset page age*/
 
     return new;
 }
@@ -79,7 +80,7 @@ struct page* pg_sched_alloc_slow(struct page *page, unsigned long private)
 {
     struct page * new  = NULL;
     int target_node    = 2; /* Unhardcode later */
-    gfp_t gfp_mask     = GFP_KERNEL; /* CHANGE TO GFP_USER */
+    gfp_t gfp_mask     = GFP_USER; /* CHANGE TO GFP_USER */
     unsigned int order = 0;
 
     new = alloc_pages_node(target_node, gfp_mask, order);
@@ -115,7 +116,7 @@ update_page_metadata(struct page * page,
 		     struct tracked_process * p,
 		     struct pg_walk_data * w)
 {
-    int temp; 
+    int temp = 0;
     int should_migrate = 0; 
     
     int alpha = p->policy.alpha;
@@ -134,6 +135,7 @@ update_page_metadata(struct page * page,
     case EMA:
 	/* w1 = 0; */
 	/* w2 = w2 + alpha_n*(accessed*1024 - w2)/alpha_d; */
+	temp = mult_frac(accessed*4096 - w2, alpha, alpha_d);
 	w2 = w2 + mult_frac(accessed*4096 - w2, alpha, alpha_d);
 	w2 = max(w2,0);
 	should_migrate = ((node_id == 0 || node_id == 1) && w2 < theta) || (node_id == 2 && w2 >= theta);
@@ -149,12 +151,10 @@ update_page_metadata(struct page * page,
     }
 
     //do histogram dirty work...
-    if (period == 400){
+    if (period == 150){
 	if (w2 < hist_size) hist[w2]++; else hist[hist_size - 1]++;
     }
-
-    w->priv_count1 = max(w->priv_count1, w2);
-    
+        
     /* page->pg_word1 = w1; */
     page->pg_word2 = (unsigned int) w2;
 
@@ -176,13 +176,10 @@ pte_callback(pte_t *pte,
     struct list_head * migration_list = NULL;
     int * list_size;
     struct tracked_process * tracked_pid = walk_data->tracked_pid;
-    int should_move;
-    int alpha = tracked_pid->policy.alpha;
-    int theta = tracked_pid->policy.theta;
-    /* int threshold = tracked_pid->policy.scans_to_be_idle; */
     int migration_enabled = tracked_pid->migration_enabled;
     unsigned int key = tracked_pid->key;
     int * refd_page_count;
+    int * eligible;
     int should_migrate = 0;
     int accessed = 0;
     enum hotness_policy pol = tracked_pid->policy.class;
@@ -204,6 +201,7 @@ pte_callback(pte_t *pte,
     migration_list = walk_data->list; /* Fast -> Slow */
     list_size      = &walk_data->list_size;
     refd_page_count= &walk_data->priv_count1;
+    eligible       = &walk_data->eligible1;
     node_id = pgdat->node_id;
     if (node_id == 0){
     	++walk_data->n0;
@@ -216,6 +214,7 @@ pte_callback(pte_t *pte,
 	migration_list = walk_data->list2; /* Slow -> Fast*/
 	list_size      = &walk_data->list_size2;
 	refd_page_count= &walk_data->priv_count2;
+	eligible       = &walk_data->eligible2;
     }
 
     /* I don't think it's legal to deref a struct page * without
@@ -230,10 +229,12 @@ pte_callback(pte_t *pte,
     if (pte_young(*pte)){
     	*pte = pte_mkold(*pte);
 	accessed = 1;
+	++refd_page_count;
     }
     
     should_migrate = update_page_metadata(page, pol, accessed, node_id, tracked_pid,walk_data);
-    
+
+    if (should_migrate) (*eligible)++;
     /* if (pgdat->node_id == 2 && period > 40){ */
     /* 	int r = get_random_int(); */
     /* 	r &= ~(1 << 31); */
@@ -243,7 +244,7 @@ pte_callback(pte_t *pte,
     /* } */
     
     if (migration_enabled && PageLRU(page) && *list_size < max_pages &&
-    	!PageUnevictable(page) && should_move /* && period > 400 */){
+    	!PageUnevictable(page) && should_migrate){
     	/*Try to add page to list */
     	/* 2) */
     	status = my_isolate_lru_page(page);
@@ -275,13 +276,19 @@ hugetlb_callback(pte_t *pte,
 		 struct mm_walk *walk)
 {
     unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
-    /* struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private; */
+    struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
   
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
-  
+
+    walk_data->huge++;
+    
     return 0; /* MAYBE? */
 }
 
+void
+move_page_vector(void)
+{
+}
 
 /* this function name has become quite a misnomer...*/
 void
@@ -305,12 +312,10 @@ count_vmas(struct tracked_process * target_tracker)
 	    .list2              = &migration_list2, /* Slow -> Fast */
 	    .list_size2         = 0,
 	    .vma_desc           = NULL,
-	    /* .migration_enabled = target_tracker->migration_enabled, */
-	    /* .threshold         = target_tracker->policy.scans_to_be_idle, */
-	    /* .slow_pages        = target_tracker->slow_pages == 0 ? 1 : target_tracker->slow_pages, */
 	    .tracked_pid        = target_tracker,
 	    .priv_count1        = 0,
 	    .priv_count2        = 0,
+	    .huge               = 0,
 	};
 
     struct mm_walk_ops
@@ -396,9 +401,9 @@ count_vmas(struct tracked_process * target_tracker)
     
     /* printk(KERN_ALERT "B\n"); */
     /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
-    printk(KERN_INFO "node 0: %d, node 1: %d, node 2: %d, migrations (Fast -> Slow): %d / %d, migrations (Slow -> Fast): %d / %d, Ref'd pages n0,n2: %d, %d\n",
+    printk(KERN_INFO "node 0: %d, node 1: %d, node 2: %d, migrations (Fast -> Slow): %d / %d, migrations (Slow -> Fast): %d / %d, avg %d, max %d\n",
 	   pg_walk_data.n0, pg_walk_data.n1, pg_walk_data.n2, pg_walk_data.list_size, pg_walk_data.eligible1, pg_walk_data.list_size2, pg_walk_data.eligible2,
-	   pg_walk_data.priv_count1, pg_walk_data.priv_count2);
+	   pg_walk_data.eligible1 != 0 ? pg_walk_data.priv_count2 / pg_walk_data.eligible1 : 0, pg_walk_data.priv_count1);
     
     /* #if PG_SCHED_FIRST_TOUCH */
     /* { */

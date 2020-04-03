@@ -23,21 +23,6 @@
 
 #define PRINT_IF_NULL(ptr,NUM) do {if (!(ptr)) printk(KERN_EMERG "FOUND IT! %d\n", NUM);} while(0);
 
-/* static int */
-/* is_new_vma(struct tracked_process * target_tracker, */
-/* 	   struct vm_area_struct *vma) */
-/* { */
-/*     struct initial_vma * obj; */
-    
-/*     list_for_each_entry(obj, &target_tracker->initial_vma_list, linkage){ */
-/* 	if (obj->vma == vma){ */
-/* 	    return false; */
-/* 	} */
-/*     } */
-
-/*     return true; */
-/* } */
-
 struct pg_walk_data
 {
     int eligible1; /* Fast -> Slow */
@@ -47,7 +32,7 @@ struct pg_walk_data
     int n2;
     struct list_head * list;  /* Fast -> Slow */
     int list_size;
-    struct list_head * list2; /* Slow -> Fast */
+    struct list_head ** promotion_vector; /* Slow -> Fast */
     int list_size2;
     struct vma_desc * vma_desc;
     /* int migration_enabled; */
@@ -59,6 +44,7 @@ struct pg_walk_data
     int huge;
 };
 
+//These two functions need to be refactored to one
 /* Fast Node Pool [0,1], but I only use 1 for now*/
 struct page* pg_sched_alloc_fast(struct page *page, unsigned long private)
 {
@@ -103,7 +89,6 @@ fake_mpol_rebind_mm my_mpol_rebind_mm = NULL;
 //These should get added to the tracker object...
 
 /* static int threshold = 10; */
-static int max_pages = 4000;
 static unsigned int period = 0;
 
 extern int * hist;
@@ -184,6 +169,7 @@ pte_callback(pte_t *pte,
     int accessed = 0;
     enum hotness_policy pol = tracked_pid->policy.class;
     int node_id;
+    int max_pages = 4000;
     
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
@@ -211,10 +197,11 @@ pte_callback(pte_t *pte,
     }
     else{
 	++walk_data->n2;
-	migration_list = walk_data->list2; /* Slow -> Fast*/
+	migration_list = walk_data->promotion_vector[min(9, walk_data->list_size2 / 4000)]; /* Slow -> Fast*/
 	list_size      = &walk_data->list_size2;
 	refd_page_count= &walk_data->priv_count2;
 	eligible       = &walk_data->eligible2;
+	max_pages      = 40000;
     }
 
     /* I don't think it's legal to deref a struct page * without
@@ -229,19 +216,12 @@ pte_callback(pte_t *pte,
     if (pte_young(*pte)){
     	*pte = pte_mkold(*pte);
 	accessed = 1;
-	++refd_page_count;
+	++(*refd_page_count);
     }
     
     should_migrate = update_page_metadata(page, pol, accessed, node_id, tracked_pid,walk_data);
 
     if (should_migrate) (*eligible)++;
-    /* if (pgdat->node_id == 2 && period > 40){ */
-    /* 	int r = get_random_int(); */
-    /* 	r &= ~(1 << 31); */
-    /* 	if (r % walk_data->slow_pages <= max_pages){ */
-    /* 	    should_move = 1; */
-    /* 	} */
-    /* } */
     
     if (migration_enabled && PageLRU(page) && *list_size < max_pages &&
     	!PageUnevictable(page) && should_migrate){
@@ -285,10 +265,29 @@ hugetlb_callback(pte_t *pte,
     return 0; /* MAYBE? */
 }
 
+//make this take an alloc function pointer
 void
-move_page_vector(void)
+move_page_vector(struct list_head * promotion_vector [], int n)
 {
+    int status;
+    struct list_head * l = NULL;
+    int i = 0;
+    int j = n / 4000;
+    if (n % 4000 == 0) --j; /* 4k -> 0, 8k -> 1 ... 40k -> 9 */
+    for (i = 0; i <= j; ++i){
+	l = promotion_vector[i];
+	status = my_migrate_pages(l, pg_sched_alloc_fast,
+				  NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
+        
+	if (status != 0) {
+	    printk(KERN_EMERG "Couldnt move %d pages... putting back on lru\n", status);
+	    //putback_movable_pages(&migration_list);
+	}	
+    }
 }
+
+#define PG_PROMOTION_VECSIZE 10
+#define PG_DEMOTION_VECSIZE 1
 
 /* this function name has become quite a misnomer...*/
 void
@@ -297,27 +296,38 @@ count_vmas(struct tracked_process * target_tracker)
     struct mm_struct * mm;
     struct vm_area_struct *vma;
     int status;
+    struct list_head * promotion_vector [PG_PROMOTION_VECSIZE];
+    LIST_HEAD(m_1);
+    LIST_HEAD(m_2);
+    LIST_HEAD(m_3);
+    LIST_HEAD(m_4);
+    LIST_HEAD(m_5);
+    LIST_HEAD(m_6);
+    LIST_HEAD(m_7);
+    LIST_HEAD(m_8);
+    LIST_HEAD(m_9);
+    LIST_HEAD(m_10);
+
     LIST_HEAD(migration_list);
-    LIST_HEAD(migration_list2);
-    
+
     struct pg_walk_data
 	pg_walk_data =
 	{
-	    .eligible1          = 0,
-	    .eligible2          = 0,
-	    .n0                 = 0,
-	    .n1                 = 0,
-	    .list               = &migration_list, /* Fast -> Slow */
-	    .list_size          = 0,
-	    .list2              = &migration_list2, /* Slow -> Fast */
-	    .list_size2         = 0,
-	    .vma_desc           = NULL,
-	    .tracked_pid        = target_tracker,
-	    .priv_count1        = 0,
-	    .priv_count2        = 0,
-	    .huge               = 0,
+	 .eligible1          = 0,
+	 .eligible2          = 0,
+	 .n0                 = 0,
+	 .n1                 = 0,
+	 .list               = &migration_list, /* Fast -> Slow */
+	 .list_size          = 0,
+	 .promotion_vector   = promotion_vector, /* Slow -> Fast */
+	 .list_size2         = 0,
+	 .vma_desc           = NULL,
+	 .tracked_pid        = target_tracker,
+	 .priv_count1        = 0,
+	 .priv_count2        = 0,
+	 .huge               = 0,
 	};
-
+        
     struct mm_walk_ops
 	pg_sched_walk_ops =
 	{
@@ -325,9 +335,22 @@ count_vmas(struct tracked_process * target_tracker)
 	    .hugetlb_entry = hugetlb_callback,
 	};
 
+    promotion_vector[0]  = &m_1;
+    promotion_vector[1]  = &m_2;    
+    promotion_vector[2]  = &m_3;
+    promotion_vector[3]  = &m_4;    
+    promotion_vector[4]  = &m_5;
+    promotion_vector[5]  = &m_6;    
+    promotion_vector[6]  = &m_7;
+    promotion_vector[7]  = &m_8;    
+    promotion_vector[8]  = &m_9;
+    promotion_vector[9]  = &m_10;    
+    
     mm = target_tracker->mm;
 
     ++period;
+
+    printk(KERN_INFO "A\n");
     
     down_write(&(mm->mmap_sem));
     for (vma = mm->mmap; vma != NULL; vma = vma->vm_next){
@@ -348,6 +371,7 @@ count_vmas(struct tracked_process * target_tracker)
     }
     up_write(&(mm->mmap_sem));
 
+    printk(KERN_INFO "B\n");
     /* Flush just to see how bad it gets */
     /* my_flush_tlb_mm_range(mm, 0UL, TLB_FLUSH_ALL, 0UL, true); */
 
@@ -376,8 +400,8 @@ count_vmas(struct tracked_process * target_tracker)
 	}
 	if (pg_walk_data.list_size2){
 	    /* printk(KERN_EMERG "Attempting to migrate page\n"); */
-	    status = my_migrate_pages(&migration_list2, pg_sched_alloc_fast,
-				      NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
+	    /* status = my_migrate_pages(&migration_list2, pg_sched_alloc_fast, */
+	    /* 			      NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED); */
 
 	    /* Need to insert call to putback_lru_pages here...*/
 	    /* From kernel source: 
@@ -385,11 +409,11 @@ count_vmas(struct tracked_process * target_tracker)
 	     * or free list only if ret != 0.
 	     */
 
-        
-	    if (status != 0) {
-		printk(KERN_EMERG "Couldnt move %d pages... putting back on lru\n", status);
-		//putback_movable_pages(&migration_list);
-	    }
+	    move_page_vector(promotion_vector, pg_walk_data.list_size2);
+	    /* if (status != 0) { */
+	    /* 	printk(KERN_EMERG "Couldnt move %d pages... putting back on lru\n", status); */
+	    /* 	//putback_movable_pages(&migration_list); */
+	    /* } */
 	    /* if (status < 0) printk(KERN_EMERG "Got a big boy error from migrate pages\n");	 */
 	}
     }
@@ -401,9 +425,9 @@ count_vmas(struct tracked_process * target_tracker)
     
     /* printk(KERN_ALERT "B\n"); */
     /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
-    printk(KERN_INFO "node 0: %d, node 1: %d, node 2: %d, migrations (Fast -> Slow): %d / %d, migrations (Slow -> Fast): %d / %d, avg %d, max %d\n",
-	   pg_walk_data.n0, pg_walk_data.n1, pg_walk_data.n2, pg_walk_data.list_size, pg_walk_data.eligible1, pg_walk_data.list_size2, pg_walk_data.eligible2,
-	   pg_walk_data.eligible1 != 0 ? pg_walk_data.priv_count2 / pg_walk_data.eligible1 : 0, pg_walk_data.priv_count1);
+    printk(KERN_INFO "node 0: %d, node 1: %d, node 2: %d, migrations (Fast -> Slow): %d / %d, migrations (Slow -> Fast): %d / %d, REF %d %d\n",
+	   pg_walk_data.n0, pg_walk_data.n1, pg_walk_data.n2, pg_walk_data.list_size, pg_walk_data.eligible1,
+	   pg_walk_data.list_size2, pg_walk_data.eligible2, pg_walk_data.priv_count1, pg_walk_data.priv_count2);
     
     /* #if PG_SCHED_FIRST_TOUCH */
     /* { */

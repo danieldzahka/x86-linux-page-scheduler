@@ -501,6 +501,7 @@ pg_sched_ioctl(struct file * filp,
             printk(KERN_INFO "log sec? %lu\n", my_arg.log_sec);
             printk(KERN_INFO "log nsec? %lu\n", my_arg.log_nsec);
 	    printk_hotness_policy(my_arg.pol);
+	    printk(KERN_INFO "node_0,node_1,node_2,demoted,eligible_for_demotion,promoted,eligigble_for_promotion,node_0_referenced,node_1_referenced,node_2_referenced\n");
 
             status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration, my_arg.pol, my_arg.alpha,
 						      my_arg.theta, my_arg.log_sec, my_arg.log_nsec);

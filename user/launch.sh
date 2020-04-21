@@ -6,14 +6,14 @@ EMA=1
 HAMMING_WEIGHT=2
 
 #Runtime Parameters
-TARGET_PATH='/home/dzahka3/Galois/build_dir/lonestar/pagerank/pagerank-push'
+TARGET_PATH="/home/dzahka3/rodinia_3.1/openmp/backprop/backprop"
 LAUNCHER='/home/dzahka3/x86-linux-page-scheduler/user/bin/launcher'
 POLICY=$EMA
-ALPHA=64
-THETA=3000
-SCAN_SECONDS=4
+ALPHA=$1
+THETA=$2
+SCAN_SECONDS=1
 SCAN_NSECONDS=0
-TO_RUN=$1
+TO_RUN=$3
 MIGRATIONS=""
 
 $LAUNCHER --target-path $TARGET_PATH \

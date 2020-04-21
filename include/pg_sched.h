@@ -35,6 +35,7 @@ enum hotness_policy {AGE_THRESHOLD, EMA, HAMMING_WEIGHT, NONE};
 struct track_pid_arg {
     pid_t pid;
     int   enable_migration;
+    int   ratio; /* out of 20 */
     int   alpha; /* out of 1024 */
     int   theta;
     unsigned long log_sec;

@@ -138,6 +138,7 @@ init_tracked_process(struct tracked_process * this,
                      pid_t pid,
 		     int migration_enabled,
 		     enum hotness_policy pol,
+		     int ratio,
 		     int alpha,
                      int theta,
                      unsigned long log_sec,
@@ -147,10 +148,14 @@ init_tracked_process(struct tracked_process * this,
     struct task_struct * tsk;
     
     this->pid = pid;
-    this->migration_enabled = migration_enabled;
-    this->policy.class      = pol;
-    this->policy.alpha      = alpha;
-    this->policy.theta      = theta;
+    this->migration_enabled  = migration_enabled;
+    this->policy.class       = pol;
+    this->policy.ratio       = ratio;
+    this->policy.alpha       = alpha;
+    this->policy.theta       = theta;
+    this->policy.max_promote = 40000;
+    this->policy.max_demote  = 40000;
+    this->policy.epoch       = 0;
     this->policy.period.sec  = log_sec;
     this->policy.period.nsec = log_nsec;
     this->release = tracked_process_release;
@@ -337,6 +342,7 @@ static int
 allocate_tracker_and_add_to_list(pid_t pid,
 				 int migration_enabled,
 				 enum hotness_policy pol,
+				 int ratio,
 				 int alpha,
 				 int theta,
                                  unsigned long log_sec,
@@ -351,7 +357,7 @@ allocate_tracker_and_add_to_list(pid_t pid,
         return -1;
     }
     status = init_tracked_process(tracked_pid, pid, migration_enabled,
-                                  pol, alpha, theta, log_sec, log_nsec);
+                                  pol, ratio, alpha, theta, log_sec, log_nsec);
     if (status){
         printk(KERN_ALERT "struct track process init failed\n");
         if (status == - 2) kref_put(&tracked_pid->refcount, tracked_pid->release);
@@ -496,6 +502,7 @@ pg_sched_ioctl(struct file * filp,
             
             printk(KERN_INFO "tracking pid: %d\n", my_arg.pid);
 	    printk(KERN_INFO "Migration Enabled? %d\n", my_arg.enable_migration);
+	    printk(KERN_INFO "Target Fastmem %% %d\n", my_arg.ratio * 5);
             printk(KERN_INFO "alpha %d\n", my_arg.alpha);
             printk(KERN_INFO "theta %d\n", my_arg.theta);
             printk(KERN_INFO "log sec? %lu\n", my_arg.log_sec);
@@ -503,7 +510,7 @@ pg_sched_ioctl(struct file * filp,
 	    printk_hotness_policy(my_arg.pol);
 	    printk(KERN_INFO "node_0,node_1,node_2,demoted,eligible_for_demotion,promoted,eligigble_for_promotion,node_0_referenced,node_1_referenced,node_2_referenced\n");
 
-            status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration, my_arg.pol, my_arg.alpha,
+            status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration, my_arg.pol, my_arg.ratio, my_arg.alpha,
 						      my_arg.theta, my_arg.log_sec, my_arg.log_nsec);
             if (status){
                 printk(KERN_ALERT "Error Allocating tracker\n");

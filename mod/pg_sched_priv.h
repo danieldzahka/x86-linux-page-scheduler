@@ -36,10 +36,13 @@ struct tracked_process {
             unsigned long nsec;
         } period;
 
+	int ratio; /* out of 20 */
 	int alpha; /* out of 1024 */
-	/* int alpha_d; */
 	int theta; /* Threshold */
 	enum hotness_policy class;
+	int max_promote; /* dynamic */
+	int max_demote;  /* dynamic */
+	int epoch;
     } policy;
 
     struct mm_struct * mm;

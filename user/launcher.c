@@ -42,6 +42,7 @@ struct program_data {
 
     /*Page Scheduler Settings*/
     int enable_migration;
+    int ratio; /* Implicitly out of 20 */
     enum hotness_policy pol;
     int alpha;
     int theta;
@@ -407,6 +408,7 @@ pg_sched_track_pid(struct program_data * data,
         .pid = data->pid[i],
 	.enable_migration = data->enable_migration,
 	.pol              = data->pol,
+	.ratio            = data->ratio,
 	.alpha            = data->alpha,
         .theta            = data->theta,
         .log_sec          = data->log_sec,
@@ -892,6 +894,7 @@ parse_cmd_line(int                   argc,
          {"exclude-env",        no_argument,       0,  'x'},
 	 {"enable-migration",   no_argument,       0,  'm'},
          {"target-path",        required_argument, 0,  't'},
+	 {"ratio",              required_argument, 0,  'r'},
 	 {"policy",             required_argument, 0,  'p'},
 	 {"alpha",              required_argument, 0,  'a'},
          {"theta",              required_argument, 0,  'o'},
@@ -933,6 +936,11 @@ parse_cmd_line(int                   argc,
             data->target_full_name = optarg;
             break;
 
+	case 'r':
+            data->ratio = atoi(optarg);
+	    assert(data->ratio > 0 && data->ratio < 20);
+            break;
+	    
         case 'a':
             data->alpha = atoi(optarg);
             break;

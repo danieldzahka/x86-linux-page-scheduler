@@ -42,7 +42,7 @@ struct pg_walk_data
     int priv_count1;
     int priv_count2;
     int priv_count3;
-    int huge;
+    int hot;
 };
 
 //These two functions need to be refactored to one
@@ -90,7 +90,7 @@ fake_mpol_rebind_mm my_mpol_rebind_mm = NULL;
 //These should get added to the tracker object...
 
 /* static int threshold = 10; */
-static unsigned int period = 0;
+/* static unsigned int period = 0; */
 
 extern int * hist;
 
@@ -102,7 +102,7 @@ update_page_metadata(struct page * page,
 		     struct tracked_process * p,
 		     struct pg_walk_data * w)
 {
-    int temp = 0;
+    /* int temp = 0; */
     int should_migrate = 0; 
     
     int alpha = p->policy.alpha;
@@ -121,7 +121,7 @@ update_page_metadata(struct page * page,
     case EMA:
 	/* w1 = 0; */
 	/* w2 = w2 + alpha_n*(accessed*1024 - w2)/alpha_d; */
-	temp = mult_frac(accessed*4096 - w2, alpha, alpha_d);
+	/* temp = mult_frac(accessed*4096 - w2, alpha, alpha_d); */
 	w2 = w2 + mult_frac(accessed*4096 - w2, alpha, alpha_d);
 	w2 = max(w2,0);
 	should_migrate = ((node_id == 0) && w2 < theta) || ((node_id == 2 || node_id == 1) && w2 >= theta);
@@ -140,7 +140,7 @@ update_page_metadata(struct page * page,
     /* if (period == 150){ */
     /* 	if (w2 < hist_size) hist[w2]++; else hist[hist_size - 1]++; */
     /* } */
-        
+    if (w2 > theta) w->hot++;    
     /* page->pg_word1 = w1; */
     page->pg_word2 = (unsigned int) w2;
 
@@ -189,7 +189,7 @@ pte_callback(pte_t *pte,
     list_size      = &walk_data->list_size;
     refd_page_count= &walk_data->priv_count1;
     eligible       = &walk_data->eligible1;
-    max_pages      = 40000;
+    max_pages      = tracked_pid->policy.max_demote;
     node_id = pgdat->node_id;
     if (node_id == 0){
     	++walk_data->n0;
@@ -197,11 +197,11 @@ pte_callback(pte_t *pte,
     else if (node_id == 1){
     	++walk_data->n1;
 	refd_page_count= &walk_data->priv_count3;
-	migration_list = walk_data->promotion_vector[min(9, walk_data->list_size2 / 4000)]; /* Slow -> Fast*/
-	list_size      = &walk_data->list_size2;
-	refd_page_count= &walk_data->priv_count3;
-	eligible       = &walk_data->eligible2;
-	max_pages      = 40000;
+	/* migration_list = walk_data->promotion_vector[min(9, walk_data->list_size2 / 4000)]; /\* Slow -> Fast*\/ */
+	/* list_size      = &walk_data->list_size2; */
+	/* refd_page_count= &walk_data->priv_count3; */
+	/* eligible       = &walk_data->eligible2; */
+	/* max_pages      = tracked_pid->policy.max_promote; */
     }
     else{
 	++walk_data->n2;
@@ -209,7 +209,7 @@ pte_callback(pte_t *pte,
 	list_size      = &walk_data->list_size2;
 	refd_page_count= &walk_data->priv_count2;
 	eligible       = &walk_data->eligible2;
-	max_pages      = 40000;
+	max_pages      = tracked_pid->policy.max_promote;
     }
 
     /* I don't think it's legal to deref a struct page * without
@@ -232,7 +232,7 @@ pte_callback(pte_t *pte,
     if (should_migrate) (*eligible)++;
     
     if (migration_enabled && PageLRU(page) && *list_size < max_pages &&
-    	!PageUnevictable(page) && should_migrate){
+    	!PageUnevictable(page) && should_migrate && tracked_pid->policy.epoch > 10){
     	/*Try to add page to list */
     	/* 2) */
     	status = my_isolate_lru_page(page);
@@ -263,11 +263,11 @@ hugetlb_callback(pte_t *pte,
 		 struct mm_walk *walk)
 {
     unsigned long mask = _PAGE_USER | _PAGE_PRESENT;
-    struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private;
+    /* struct pg_walk_data * walk_data = (struct pg_walk_data *)walk->private; */
   
     if ((pte_flags(*pte) & mask) != mask) return 0; /*NaBr0*/
 
-    walk_data->huge++;
+    /* walk_data->huge++; */
     
     return 0; /* MAYBE? */
 }
@@ -348,7 +348,7 @@ count_vmas(struct tracked_process * target_tracker)
 	 .priv_count1        = 0,
 	 .priv_count2        = 0,
 	 .priv_count3        = 0,
-	 .huge               = 0,
+	 .hot                = 0,
 	};
         
     struct mm_walk_ops
@@ -381,8 +381,6 @@ count_vmas(struct tracked_process * target_tracker)
     demotion_vector[9]  = &d_10;    
     
     mm = target_tracker->mm;
-
-    ++period;
 
     /* printk(KERN_INFO "A\n"); */
     
@@ -418,7 +416,7 @@ count_vmas(struct tracked_process * target_tracker)
 	    /* status = my_migrate_pages(&migration_list, pg_sched_alloc_slow, */
 	    /* 			      NULL, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED); */
 
-	    move_page_vector(demotion_vector, pg_walk_data.list_size, 1);
+	    move_page_vector(demotion_vector, pg_walk_data.list_size, 2);
 	    
 	    /* Need to insert call to putback_lru_pages here...*/
 	    /* From kernel source: 
@@ -451,27 +449,53 @@ count_vmas(struct tracked_process * target_tracker)
     /* Free Stale VMA_DESC */
     free_unctouched_vmas(target_tracker);
 
-    target_tracker->slow_pages = pg_walk_data.n2;
+    printk(KERN_INFO "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+	   pg_walk_data.n0, pg_walk_data.n1, pg_walk_data.n2, pg_walk_data.list_size, pg_walk_data.eligible1,
+	   pg_walk_data.list_size2, pg_walk_data.eligible2, pg_walk_data.priv_count1, pg_walk_data.priv_count3,pg_walk_data.priv_count2, target_tracker->policy.theta);        
+    
+    /* Do our control logic here...*/
+    {
+	int dram_low;
+	int dram_high;
+	int dram_targ;
+	int denom = 20;
+	int err   = 1;
+	int total = pg_walk_data.n0 + pg_walk_data.n1 + pg_walk_data.n2;
+	int actual= pg_walk_data.n0 + pg_walk_data.list_size2;
+
+	dram_low  = mult_frac(total, target_tracker->policy.ratio - err , denom);
+	dram_high = mult_frac(total, target_tracker->policy.ratio + err , denom);
+	dram_targ = mult_frac(total, target_tracker->policy.ratio, denom);
+
+	//use randomness to get selection of eligible pages (only for promotion though...)
+	//during scan keep track of % pages that could be hot, adjust cutoff so that you at least have
+	//enough to fill
+	if (actual < dram_low){
+	    //cap demotion
+	    target_tracker->policy.max_demote = 0;
+	    target_tracker->policy.max_promote = 40000;
+	} else if (actual > dram_high){
+	    //cap promotion
+	    target_tracker->policy.max_demote = 40000;
+	    target_tracker->policy.max_promote = 0;
+	} else {
+	    //in the target zone
+	}
+
+	//control thresholds
+	//really just make sure that we have enough pages eligible for DRAM
+	if (target_tracker->policy.epoch > 10){
+	    if (pg_walk_data.hot < dram_targ){
+		//need to lower the cutoff
+		target_tracker->policy.theta = mult_frac(target_tracker->policy.theta, 4, 5);
+	    } else if (pg_walk_data.hot > dram_high){
+		//raise the bar... this really may not be necessary
+		target_tracker->policy.theta = min(target_tracker->policy.theta+100, 3500);
+	    }
+	}
+	
+    }
+    target_tracker->policy.epoch++;
     
     /* printk(KERN_ALERT "B\n"); */
-    /* printk(KERN_INFO "Found %d 4KB pages\n", pg_walk_data.user_pages_4KB); */
-    printk(KERN_INFO "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
-	   pg_walk_data.n0, pg_walk_data.n1, pg_walk_data.n2, pg_walk_data.list_size, pg_walk_data.eligible1,
-	   pg_walk_data.list_size2, pg_walk_data.eligible2, pg_walk_data.priv_count1, pg_walk_data.priv_count3,pg_walk_data.priv_count2);
-    
-    /* #if PG_SCHED_FIRST_TOUCH */
-    /* { */
-    /* static int a; */
-    /* a = 1; */
-    /* if (a && pg_walk_data.n0 > 10000){ */
-    /* 	nodemask_t mask; */
-    /* 	mask = nodemask_of_node(2); */
-    /* 	my_mpol_rebind_mm(mm, &mask); */
-    /* 	target_tracker->policy.period.sec  = 1; /\* Change period *\/ */
-    /* 	target_tracker->policy.period.nsec = 0; */
-    /* 	a = 0; */
-    /* 	printk(KERN_INFO "CHANGING\n"); */
-    /* } */
-    /* } */
-    /* #endif */
 }

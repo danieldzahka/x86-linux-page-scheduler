@@ -21,7 +21,16 @@ Install the kernel with:
 cd linux-stable
 sudo make install
 ```
-
+## Configuring pmem with ipmctl, ndctl and daxctl
+Configure pmem device in app direct mode using `ipmctl`. Create pmem namespace `dax0.0` using the `ndctl` command:
+```
+ndctl create-namespace -m devdax -s 204G
+```
+Reconfigure `dax0.0` into system-ram represented by a numa node with `daxctl`:
+```
+daxctl reconfigure-device --mode=system-ram dax0.0
+```
+Verify that the pmem numa node was created with `numactl -H`.
 ## Compiling kernel module, userspace runtime, and rodinia
 Run:
 ```

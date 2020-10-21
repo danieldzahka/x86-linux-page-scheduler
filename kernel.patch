@@ -1,0 +1,17 @@
+diff -uNr linux.vanilla/include/linux/mm_types.h linux-5.4.18/include/linux/mm_types.h
+--- linux.vanilla/include/linux/mm_types.h	2020-02-05 13:22:53.000000000 -0800
++++ linux-5.4.18/include/linux/mm_types.h	2020-10-21 06:33:10.546971762 -0700
+@@ -219,6 +219,13 @@
+ #ifdef LAST_CPUPID_NOT_IN_PAGE_FLAGS
+ 	int _last_cpupid;
+ #endif
++    union {
++	struct {
++	    unsigned int pg_word1;
++	    unsigned int pg_word2;
++	};
++	unsigned long pg_sched_data;
++    };
+ } _struct_page_alignment;
+ 
+ static inline atomic_t *compound_mapcount_ptr(struct page *page)

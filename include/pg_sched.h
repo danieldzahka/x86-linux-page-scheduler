@@ -38,6 +38,9 @@ struct track_pid_arg {
     int   ratio; /* out of 20 */
     int   alpha; /* out of 1024 */
     int   theta;
+    int   warmup_scans;
+    int   migration_cycle;
+    int   max_migrations;
     unsigned long log_sec;
     unsigned long log_nsec;
     enum hotness_policy pol;

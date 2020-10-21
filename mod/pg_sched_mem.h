@@ -20,14 +20,15 @@ typedef void (*fake_flush_tlb_mm_range)(struct mm_struct *mm, unsigned long star
 typedef int (*fake_walk_page_vma)(struct vm_area_struct *vma, const struct mm_walk_ops *ops,
 				  void *private);
 typedef void (*fake_mpol_rebind_mm)(struct mm_struct *mm, nodemask_t *new);
-
+typedef bool (*fake_isolate_huge_page)(struct page *page, struct list_head *list);
+    
 extern fake_isolate_lru_page my_isolate_lru_page;
 extern fake_vma_is_stack_for_current my_vma_is_stack_for_current;
 extern fake_migrate_pages my_migrate_pages;
 extern fake_flush_tlb_mm_range my_flush_tlb_mm_range;
 extern fake_walk_page_vma my_walk_page_vma;
 extern fake_mpol_rebind_mm my_mpol_rebind_mm;
-
+extern fake_isolate_huge_page my_isolate_huge_page;
 #define PG_SCHED_FIRST_TOUCH 0
 
 #endif /* __PG_SCHED_MEM_H__ */

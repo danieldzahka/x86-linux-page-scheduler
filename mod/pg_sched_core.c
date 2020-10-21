@@ -142,7 +142,10 @@ init_tracked_process(struct tracked_process * this,
 		     int alpha,
                      int theta,
                      unsigned long log_sec,
-                     unsigned long log_nsec)
+                     unsigned long log_nsec,
+                     int warmup_scans,
+                     int migration_cycle,
+                     int max_migrations)
 {
     struct pid* p;
     struct task_struct * tsk;
@@ -153,9 +156,12 @@ init_tracked_process(struct tracked_process * this,
     this->policy.ratio       = ratio;
     this->policy.alpha       = alpha;
     this->policy.theta       = theta;
-    this->policy.max_promote = 40000;
-    this->policy.max_demote  = 40000;
+    this->policy.max_promote = max_migrations;
+    this->policy.max_demote  = max_migrations;
+    this->policy.max_migrations = max_migrations;
     this->policy.epoch       = 0;
+    this->policy.mig_cycle   = migration_cycle;
+    this->policy.warmup_scans = warmup_scans;
     this->policy.period.sec  = log_sec;
     this->policy.period.nsec = log_nsec;
     this->release = tracked_process_release;
@@ -346,7 +352,10 @@ allocate_tracker_and_add_to_list(pid_t pid,
 				 int alpha,
 				 int theta,
                                  unsigned long log_sec,
-                                 unsigned long log_nsec)
+                                 unsigned long log_nsec,
+                                 int warmup_scans,
+                                 int migration_cycle,
+                                 int max_migrations)
 {
     struct tracked_process * tracked_pid;
     int status;
@@ -357,7 +366,8 @@ allocate_tracker_and_add_to_list(pid_t pid,
         return -1;
     }
     status = init_tracked_process(tracked_pid, pid, migration_enabled,
-                                  pol, ratio, alpha, theta, log_sec, log_nsec);
+                                  pol, ratio, alpha, theta, log_sec, log_nsec,
+                                  warmup_scans, migration_cycle, max_migrations);
     if (status){
         printk(KERN_ALERT "struct track process init failed\n");
         if (status == - 2) kref_put(&tracked_pid->refcount, tracked_pid->release);
@@ -507,11 +517,15 @@ pg_sched_ioctl(struct file * filp,
             printk(KERN_INFO "theta %d\n", my_arg.theta);
             printk(KERN_INFO "log sec? %lu\n", my_arg.log_sec);
             printk(KERN_INFO "log nsec? %lu\n", my_arg.log_nsec);
+            printk(KERN_INFO "warmup scans? %d\n", my_arg.warmup_scans);
+            printk(KERN_INFO "migrations cycle? %d\n", my_arg.migration_cycle);
+            printk(KERN_INFO "max migrations? %d\n", my_arg.max_migrations);
 	    printk_hotness_policy(my_arg.pol);
-	    printk(KERN_INFO "node_0,node_1,node_2,demoted,eligible_for_demotion,promoted,eligigble_for_promotion,node_0_referenced,node_1_referenced,node_2_referenced\n");
+	    printk(KERN_INFO "node_0,node_1,node_2,demoted,eligible_for_demotion,promoted,eligigble_for_promotion,node_0_referenced,node_1_referenced,node_2_referenced,theta,epoch\n");
 
             status = allocate_tracker_and_add_to_list(my_arg.pid, my_arg.enable_migration, my_arg.pol, my_arg.ratio, my_arg.alpha,
-						      my_arg.theta, my_arg.log_sec, my_arg.log_nsec);
+						      my_arg.theta, my_arg.log_sec, my_arg.log_nsec, my_arg.warmup_scans, my_arg.migration_cycle,
+                                                      my_arg.max_migrations);
             if (status){
                 printk(KERN_ALERT "Error Allocating tracker\n");
                 break;
@@ -607,6 +621,15 @@ get_nonexported_symbols(void)
 
     my_walk_page_vma = (fake_walk_page_vma) sym;
 
+    sym = kallsyms_lookup_name("isolate_huge_page");
+    if (sym == 0){
+	printk(KERN_ALERT "Symbol: isolate_huge_page not found!\n");
+	return -1;
+    }
+
+    my_isolate_huge_page = (fake_isolate_huge_page) sym;
+
+    
     #if PG_SCHED_FIRST_TOUCH
     sym = kallsyms_lookup_name("mpol_rebind_mm");
     if (sym == 0){

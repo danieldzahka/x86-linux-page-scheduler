@@ -42,7 +42,10 @@ struct tracked_process {
 	enum hotness_policy class;
 	int max_promote; /* dynamic */
 	int max_demote;  /* dynamic */
+        int max_migrations; /* static limit on migrations */
 	int epoch;
+	int mig_cycle;
+        int warmup_scans;
     } policy;
 
     struct mm_struct * mm;

@@ -48,6 +48,9 @@ struct program_data {
     int theta;
     unsigned long log_sec;
     unsigned long log_nsec;
+    int warmup_scans;
+    int migration_cycle;
+    int max_migrations;
     
     /* target argc/argv/envp */
     int argc;
@@ -413,6 +416,9 @@ pg_sched_track_pid(struct program_data * data,
         .theta            = data->theta,
         .log_sec          = data->log_sec,
         .log_nsec         = data->log_nsec,
+        .warmup_scans     = data->warmup_scans,
+        .migration_cycle  = data->migration_cycle,
+        .max_migrations   = data->max_migrations,
     };
 
     data->managed_pid[data->managed_pids_size++] = data->pid[i];
@@ -900,6 +906,9 @@ parse_cmd_line(int                   argc,
          {"theta",              required_argument, 0,  'o'},
          {"scan-period-sec",    required_argument, 0,  's'},
          {"scan-period-nsec",   required_argument, 0,  'n'},
+         {"warmup-scans",       required_argument, 0,  'q'},
+         {"migration-cycle",    required_argument, 0,  'z'},
+         {"max-migrations",     required_argument, 0,  'u'},
          {0,                    0,                 0,   0}
         };
 
@@ -955,6 +964,15 @@ parse_cmd_line(int                   argc,
 
         case 'n':
             data->log_nsec = strtoul(optarg, NULL, 10);
+            break;
+        case 'q':
+            data->warmup_scans = atoi(optarg);
+            break;
+        case 'z':
+            data->migration_cycle = atoi(optarg);
+            break;
+        case 'u':
+            data->max_migrations = atoi(optarg);
             break;
             
         case '?':

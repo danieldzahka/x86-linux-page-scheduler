@@ -1,6 +1,6 @@
 #!/bin/bash
 
-EXEC="/home/dzahka3/rodinia_3.1/openmp/lud/omp/lud_omp"
+EXEC=$(readlink -f ../rodinia_3.1/openmp/lud/omp/lud_omp)
 NTHREAD=2
 SIZE=22000
 

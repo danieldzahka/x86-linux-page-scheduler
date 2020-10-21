@@ -2,18 +2,21 @@
 
 # echo 3 | sudo tee /proc/sys/vm/drop_caches
 
-# echo numactl -N 0 -m 0 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
-# numactl -N 0 -m 0 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
+EXEC=$(readlink -f ../rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans)
+FILE="../rodinia_3.1/openmp/kmeans/10000000_34f.txt"
 
-# echo numactl -N 0 -i 0,1 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
-# numactl -N 0 -i 0,1 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
+# echo numactl -N 0 -m 0 $EXEC -n 16 -i $FILE
+# numactl -N 0 -m 0 $EXEC -n 16 -i $FILE
 
-# echo numactl -N 0 -m 1 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
-# numactl -N 0 -m 1 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
+# echo numactl -N 0 -i 0,1 $EXEC -n 16 -i $FILE
+# numactl -N 0 -i 0,1 $EXEC -n 16 -i $FILE
 
-# echo numactl -N 0 -i 0,2 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
-# numactl -N 0 -i 0,2 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
+# echo numactl -N 0 -m 1 $EXEC -n 16 -i $FILE
+# numactl -N 0 -m 1 $EXEC -n 16 -i $FILE
 
-echo numactl -N 0 -m 2 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
-numactl -N 0 -m 2 /home/dzahka3/rodinia_3.1/openmp/kmeans/kmeans_openmp/kmeans -n 16 -i /home/dzahka3/rodinia_3.1/openmp/kmeans/10000000_34f.txt
+# echo numactl -N 0 -i 0,2 $EXEC -n 16 -i $FILE
+# numactl -N 0 -i 0,2 $EXEC -n 16 -i $FILE
+
+echo numactl -N 0 -m 2 $EXEC -n 16 -i $FILE
+numactl -N 0 -m 2 $EXEC -n 16 -i $FILE
 

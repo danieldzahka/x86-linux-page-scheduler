@@ -7,47 +7,23 @@ HAMMING_WEIGHT=2
 
 #Runtime Parameters
 TARGET_PATH=$1
-LAUNCHER='/home/dzahka3/x86-linux-page-scheduler/user/bin/launcher'
+LAUNCHER='./bin/launcher'
 RATIO=4
 POLICY=$EMA
 ALPHA=256 # Out of 1024!
 THETA=1000
-SCAN_SECONDS=(5 5
-              6 6
-              7 7
-              8 8
-              9 9
-              10
-             )
-SCAN_NSECONDS=(0 500000000
-               0 500000000
-               0 500000000
-               0 500000000
-               0 500000000
-               0
-              ) 
-WARMUP_SCANS=(1 1
-              1 1
-              1 1
-              1 1
-              1 1
-              1
-             )
-SCANS_PER_MIG=(1 1 1 1 1)
-MAX_MIGRATIONS=(40000 40000
-                40000 40000
-                40000 40000
-                40000 40000
-                40000 40000
-                40000
-               )
+SCAN_SECONDS=(1 2 5)
+SCAN_NSECONDS=(0 0 0) 
+WARMUP_SCANS=(10 5 2)
+SCANS_PER_MIG=(1 1 1)
+MAX_MIGRATIONS=(40000 40000 40000)
 TO_RUN=$2
 MIGRATIONS="-m"
 
 OUTDIR=$3
 
 for i in ${!SCAN_SECONDS[@]}; do
-    FILE="${OUTDIR}/data-${RATIO}-${ALPHA}-${SCAN_SECONDS[i]}-${SCAN_NSECONDS[i]}-${SCANS_PER_MIG[0]}-${MAX_MIGRATIONS[i]}.txt"
+    FILE="${OUTDIR}/data-${RATIO}-${ALPHA}-${SCAN_SECONDS[i]}-${SCAN_NSECONDS[i]}-${SCANS_PER_MIG[i]}-${MAX_MIGRATIONS[i]}.txt"
     echo $FILE
     sudo dmesg --clear
     $LAUNCHER --target-path $TARGET_PATH \
@@ -58,7 +34,7 @@ for i in ${!SCAN_SECONDS[@]}; do
 	      --scan-period-sec ${SCAN_SECONDS[i]} \
 	      --scan-period-nsec ${SCAN_NSECONDS[i]} \
               --warmup-scans ${WARMUP_SCANS[i]} \
-              --migration-cycle ${SCANS_PER_MIG[0]} \
+              --migration-cycle ${SCANS_PER_MIG[i]} \
               --max-migrations ${MAX_MIGRATIONS[i]} \
 	      $MIGRATIONS \
 	      $TO_RUN > $FILE

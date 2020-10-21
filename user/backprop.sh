@@ -1,6 +1,6 @@
 #!/bin/bash
 
-EXEC="/home/dzahka3/rodinia_3.1/openmp/backprop/backprop 50000000"
+EXEC="$(readlink -f ../rodinia_3.1/openmp/backprop/backprop) 50000000"
 # PERF="perf stat -e task-clock,cycles,instructions,cache-references,cache-misses numactl -N 0 -m 0 $EXEC"
 
 # echo $PERF
